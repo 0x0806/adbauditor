@@ -135,20 +135,6 @@ Access at:
 
 5. **Accept the USB debugging prompt** on your device
 
-### Connecting via WiFi
-
-1. First connect via USB and go to Shell
-2. Run: `setprop service.adb.tcp.port 5555`
-3. Run: `stop adbd && start adbd`
-4. Click "Add Device" → "ADB over WiFi"
-5. Enter device IP and port 5555
-
-### Root Access
-
-For full security analysis (accessing `/data/data/`, system files, etc.):
-1. Ensure your device is rooted
-2. Enable "Root" toggle in File Browser
-3. Grant root access when prompted on device
 
 ## Documentation
 
@@ -172,16 +158,6 @@ adbauditor/
 ├── LICENSE                 # MIT License
 └── README.md               # This file
 ```
-
-### Security Checks Performed
-
-- **Insecure Storage**: Detection of sensitive data in SharedPreferences
-- **Hardcoded Secrets**: API keys, passwords, tokens in local storage
-- **Debug Mode**: Applications running in debug mode
-- **Backup Enabled**: Apps allowing backup of sensitive data
-- **World-Readable Files**: Insecure file permissions
-- **SQLite Injection**: Vulnerable database queries
-- **Certificate Pinning**: Missing SSL pinning implementation
 
 ### Keyboard Shortcuts
 
