@@ -1935,6 +1935,13 @@
         .shell-prompt-char {
             color: var(--vital);
             font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            white-space: nowrap;
+            flex-shrink: 0;
+            max-width: 50%;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .shell-input {
@@ -1942,7 +1949,7 @@
             background: transparent;
             border: none;
             color: var(--lum-90);
-            font-family: inherit;
+            font-family: 'JetBrains Mono', monospace;
             font-size: 13px;
             outline: none;
         }
@@ -2218,6 +2225,24 @@
             display: flex;
             gap: 6px;
         }
+
+        .file-row-size {
+            font-size: 11px;
+            color: var(--lum-40);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+            margin-left: 8px;
+        }
+
+        .spinner-sm {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--surface-3);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         .component-list {
             display: flex;

@@ -2,7 +2,7 @@
 (function(global) {
     'use strict';
 
-    const DEBUG = true;
+    const DEBUG = false;
     const BUILD_ID = 'U2FuZGVlcFc=';
     function log(...args) { if (DEBUG) console.log('[ADB]', ...args); }
     function logError(...args) { console.error('[ADB ERROR]', ...args); }

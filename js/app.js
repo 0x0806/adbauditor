@@ -13,6 +13,8 @@
         files: [],
         shellHistory: [],
         shellHistoryIndex: -1,
+        shellCwd: '',
+        shellRootMode: false,
         showSystemApps: false,
         securityApps: [],
         currentSecurityTab: 'localStorage',
@@ -39,6 +41,30 @@
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
         }[c]));
     };
+    const safeEncode = (str) => {
+        try { return btoa(unescape(encodeURIComponent(str))); } catch(e) { return btoa(str); }
+    };
+    const safeDecode = (str) => {
+        try { return decodeURIComponent(escape(atob(str))); } catch(e) { return atob(str); }
+    };
+    const shellQuote = (path) => {
+        return '"' + String(path).replace(/["\\$`]/g, '\\$&') + '"';
+    };
+    async function shellReadBase64(path) {
+        const q = shellQuote(path);
+        if (path.startsWith('/sdcard/') || path.startsWith('/storage/emulated/')) {
+            return await adb.shell('base64 ' + q);
+        }
+        return await adb.shell('su -c "base64 ' + q.replace(/"/g, '\\"') + '"');
+    }
+    function base64ToBytes(b64) {
+        const clean = b64.trim().replace(/\s/g, '');
+        if (!clean) throw new Error('Empty file or access denied');
+        const binary = atob(clean);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return bytes;
+    }
     let adb = null;
     let deviceManager = null;
     const el = {
@@ -409,6 +435,11 @@
                 <div class="page-header">
                     <h1 class="page-title">Shell</h1>
                     <div class="page-actions">
+                        <label class="root-toggle">
+                            <input type="checkbox" id="shellRootToggle" onchange="app.toggleShellRoot()">
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Root</span>
+                        </label>
                         <button class="btn btn-ghost" onclick="app.clearShell()">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             Clear
@@ -426,7 +457,7 @@
                         <div class="shell-line" style="color: var(--lum-50);">Type commands and press Enter. Type 'help' for available commands.</div>
                     </div>
                     <div class="shell-input-row">
-                        <span class="shell-prompt-char">$</span>
+                        <span class="shell-prompt-char" id="shellPrompt">$</span>
                         <input type="text" class="shell-input" id="shellInput" placeholder="Enter command...">
                     </div>
                 </div>
@@ -460,6 +491,14 @@
                     <button class="tab-btn" data-tab="logcat" onclick="app.switchSecurityTab('logcat')">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/></svg>
                         Logcat
+                    </button>
+                    <button class="tab-btn" data-tab="appInfo" onclick="app.switchSecurityTab('appInfo')">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        App Info
+                    </button>
+                    <button class="tab-btn" data-tab="fullScan" onclick="app.switchSecurityTab('fullScan')">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        Full Scan
                     </button>
                 </div>
                 <div id="securityTabContent"></div>
@@ -564,6 +603,44 @@
                     <button class="btn btn-ghost" onclick="app.clearLogcat()" title="Clear Logs">Clear</button>
                 </div>
                 <div id="logcatOutput" class="logcat-output"></div>
+            </div>`,
+        appInfo: `
+            <div class="security-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        Application Details
+                    </div>
+                </div>
+                <p class="panel-desc">View detailed metadata, flags, install dates, signing info, and resource usage for any installed app.</p>
+                <div class="form-row">
+                    <select id="appInfoSelect"><option value="">Select application...</option></select>
+                    <button class="btn btn-primary" onclick="app.loadAppInfo()">Inspect</button>
+                </div>
+                <div id="appInfoResults"></div>
+            </div>`,
+        fullScan: `
+            <div class="security-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        Full Security Scan
+                    </div>
+                    <span class="badge warning">Comprehensive</span>
+                </div>
+                <p class="panel-desc">Run all security tests against a single application. Checks storage, backup, components, signing, network, permissions, and more.</p>
+                <div class="form-row">
+                    <select id="fullScanSelect"><option value="">Select application...</option></select>
+                    <button class="btn btn-primary" onclick="app.runFullScan()">Run Full Scan</button>
+                </div>
+                <div id="fullScanProgress" class="hidden" style="margin-top:12px">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                        <div class="spinner-sm"></div>
+                        <span id="fullScanStatus" style="color:var(--lum-60);font-size:13px">Starting...</span>
+                    </div>
+                    <div style="background:var(--surface-2);border-radius:4px;height:4px;overflow:hidden"><div id="fullScanBar" style="background:var(--primary);height:100%;width:0%;transition:width 0.3s"></div></div>
+                </div>
+                <div id="fullScanResults"></div>
             </div>`
     };
 
@@ -690,11 +767,26 @@
     }
     function setupShell() {
         const input = document.getElementById('shellInput');
+        const prompt = document.getElementById('shellPrompt');
+        const shellRootToggle = document.getElementById('shellRootToggle');
+        if (shellRootToggle) {
+            shellRootToggle.checked = state.shellRootMode;
+        }
+        if (prompt) {
+            const p = state.shellRootMode ? '#' : '$';
+            prompt.textContent = state.shellCwd ? state.shellCwd + ' ' + p : p;
+        }
         if (input) {
             input.addEventListener('keydown', async e => {
                 if (e.key === 'Enter' && input.value.trim()) {
-                    await app.executeCommand(input.value.trim());
+                    const cmd = input.value.trim();
                     input.value = '';
+                    await app.executeCommand(cmd);
+                    const pr = document.getElementById('shellPrompt');
+                    if (pr) {
+                        const ch = state.shellRootMode ? '#' : '$';
+                        pr.textContent = state.shellCwd ? state.shellCwd + ' ' + ch : ch;
+                    }
                 } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     if (state.shellHistoryIndex < state.shellHistory.length - 1) {
@@ -725,7 +817,9 @@
             backup: 'backupSelect',
             exported: 'exportedSelect',
             debuggable: 'debugSelect',
-            permissions: 'permSelect'
+            permissions: 'permSelect',
+            appInfo: 'appInfoSelect',
+            fullScan: 'fullScanSelect'
         };
         const currentSelectId = selectMap[state.currentSecurityTab];
         const currentSelect = document.getElementById(currentSelectId);
@@ -750,7 +844,7 @@
         select.disabled = false;
         if (state.securityApps.length > 0) {
             select.innerHTML = '<option value="">Select application...</option>' +
-                state.securityApps.map(p => `<option value="${p}">${p}</option>`).join('');
+                state.securityApps.map(p => `<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`).join('');
         } else {
             select.innerHTML = '<option value="">No applications found</option>';
         }
@@ -879,6 +973,8 @@
             this.stopLogcat();
             if (state.connected) {
                 state.connected = false;
+                state.shellCwd = '';
+                state.shellRootMode = false;
                 setAmbientActive(false);
                 el.connectBtn.classList.remove('hidden');
                 el.disconnectBtn.classList.add('hidden');
@@ -971,6 +1067,8 @@
                 adb = null;
             }
             state.connected = false;
+            state.shellCwd = '';
+            state.shellRootMode = false;
             setAmbientActive(false);
             el.connectBtn.classList.remove('hidden');
             el.disconnectBtn.classList.add('hidden');
@@ -1170,9 +1268,9 @@
             if (!fileList) return;
             fileList.innerHTML = '<div class="empty-state"><p>Loading...</p></div>';
             try {
-                const safePath = path.replace(/'/g, "'\\''");
-                const lsCmd = `ls -la '${safePath}' 2>/dev/null`;
-                const cmd = state.rootMode ? `su -c "${lsCmd.replace(/"/g, '\\"')}"` : lsCmd;
+                const safePath = path.replace(/"/g, '\\"');
+                const lsCmd = `ls -la "${safePath}" 2>/dev/null`;
+                const cmd = state.rootMode ? `su -c '${lsCmd.replace(/'/g, "'\\''")}'` : lsCmd;
                 const output = await adb.shell(cmd);
                 const lines = output.split('\n').filter(l => l.trim() && !l.startsWith('total'));
                 state.files = lines.map(line => {
@@ -1307,8 +1405,8 @@
                 let bytes;
                 if (state.rootMode) {
                     showLoading('Downloading...', fileName + ' (root mode)');
-                    const safePath = path.replace(/'/g, "'\\''");
-                    const cmd = `su -c 'base64 "'"'${safePath}'"'"''`;
+                    const safePath = path.replace(/"/g, '\\"');
+                    const cmd = `su -c "base64 \\"${safePath}\\""`;
                     const base64Output = await adb.shell(cmd);
                     if (!base64Output || base64Output.includes('Permission denied') || base64Output.includes('No such file')) {
                         throw new Error('Cannot read file (permission denied or not found)');
@@ -1360,12 +1458,12 @@
                         binary += String.fromCharCode(bytes[i]);
                     }
                     const base64Data = btoa(binary);
-                    const safeDestPath = destPath.replace(/'/g, "'\\''");
-                    await adb.shell(`su -c 'echo -n "" > "'"'${safeDestPath}'"'"''`);
+                    const safeDestPath = destPath.replace(/"/g, '\\"');
+                    await adb.shell(`su -c "echo -n '' > \\"${safeDestPath}\\""`);
                     const chunkSize = 32000; 
                     for (let i = 0; i < base64Data.length; i += chunkSize) {
                         const chunk = base64Data.slice(i, i + chunkSize);
-                        await adb.shell(`su -c 'echo -n "${chunk}" | base64 -d >> "'"'${safeDestPath}'"'"''`);
+                        await adb.shell(`su -c "echo -n '${chunk}' | base64 -d >> \\"${safeDestPath}\\""`);
                     }
                     hideLoading();
                     showToast(`Uploaded: ${file.name}`, 'success');
@@ -1415,25 +1513,91 @@
         },
         async executeCommand(cmd) {
             const output = document.getElementById('shellOutput');
+            const input = document.getElementById('shellInput');
             state.shellHistory.push(cmd);
             state.shellHistoryIndex = -1;
-            output.innerHTML += `<div class="shell-line"><span class="shell-prompt">$ </span>${cmd}</div>`;
+            const promptChar = state.shellRootMode ? '#' : '$';
+            output.insertAdjacentHTML('beforeend', `<div class="shell-line"><span class="shell-prompt">${promptChar} </span>${escapeHtml(cmd)}</div>`);
             if (cmd === 'clear') {
                 output.innerHTML = '';
+                if (input) input.focus();
                 return;
             }
             if (cmd === 'help') {
-                output.innerHTML += `<div class="shell-result">Commands: ls, cd, pwd, cat, ps, df, pm, dumpsys, getprop, logcat, clear</div>`;
+                const rootNote = state.shellRootMode ? ' (root mode active — commands run via su)' : '';
+                output.insertAdjacentHTML('beforeend', `<div class="shell-result">Commands: ls, cd, pwd, cat, ps, df, pm, dumpsys, getprop, logcat, clear${rootNote}</div>`);
                 output.scrollTop = output.scrollHeight;
+                if (input) input.focus();
                 return;
             }
+            const isAlreadySu = /^\s*su\b/.test(cmd);
+            const useRoot = state.shellRootMode && !isAlreadySu;
+            const wrapRoot = (shellCmd) => {
+                if (!useRoot) return shellCmd;
+                const escaped = shellCmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+                return `su -c "${escaped}"`;
+            };
             try {
-                const result = await adb.shell(cmd);
-                output.innerHTML += `<div class="shell-result">${result.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+                const cdMatch = cmd.match(/^\s*cd\s+(.*)/);
+                if (cdMatch) {
+                    const target = cdMatch[1].trim().replace(/^["']|["']$/g, '');
+                    let resolveCmd;
+                    if (target === '~' || target === '') {
+                        resolveCmd = useRoot ? 'echo /' : 'echo /storage/emulated/0';
+                    } else if (target.startsWith('/')) {
+                        resolveCmd = `cd "${target}" 2>&1 && pwd`;
+                    } else if (state.shellCwd) {
+                        resolveCmd = `cd "${state.shellCwd}" && cd "${target}" 2>&1 && pwd`;
+                    } else {
+                        resolveCmd = `cd "${target}" 2>&1 && pwd`;
+                    }
+                    const result = await adb.shell(wrapRoot(resolveCmd));
+                    const trimmed = result.trim();
+                    if (trimmed.startsWith('/')) {
+                        state.shellCwd = trimmed;
+                        output.insertAdjacentHTML('beforeend', `<div class="shell-result">${escapeHtml(state.shellCwd)}</div>`);
+                    } else {
+                        output.insertAdjacentHTML('beforeend', `<div class="shell-error">${escapeHtml(trimmed || 'No such directory')}</div>`);
+                    }
+                } else {
+                    let fullCmd;
+                    if (isAlreadySu) {
+                        fullCmd = state.shellCwd ? `cd "${state.shellCwd}" 2>/dev/null; ${cmd}` : cmd;
+                    } else {
+                        const baseCmd = state.shellCwd ? `cd "${state.shellCwd}" && ${cmd}` : cmd;
+                        fullCmd = wrapRoot(baseCmd);
+                    }
+                    const result = await adb.shell(fullCmd);
+                    if (result) {
+                        output.insertAdjacentHTML('beforeend', `<div class="shell-result">${escapeHtml(result)}</div>`);
+                    }
+                }
             } catch (e) {
-                output.innerHTML += `<div class="shell-error">Error: ${escapeHtml(e.message)}</div>`;
+                output.insertAdjacentHTML('beforeend', `<div class="shell-error">Error: ${escapeHtml(e.message)}</div>`);
             }
             output.scrollTop = output.scrollHeight;
+            if (input) input.focus();
+        },
+        toggleShellRoot() {
+            state.shellRootMode = !state.shellRootMode;
+            const prompt = document.getElementById('shellPrompt');
+            const output = document.getElementById('shellOutput');
+            const ch = state.shellRootMode ? '#' : '$';
+            if (prompt) {
+                prompt.textContent = state.shellCwd ? state.shellCwd + ' ' + ch : ch;
+            }
+            if (state.shellRootMode) {
+                if (output) {
+                    output.insertAdjacentHTML('beforeend', `<div class="shell-line" style="color:var(--warning)">Root mode enabled — commands will run via su</div>`);
+                    output.scrollTop = output.scrollHeight;
+                }
+            } else {
+                if (output) {
+                    output.insertAdjacentHTML('beforeend', `<div class="shell-line" style="color:var(--lum-50)">Root mode disabled</div>`);
+                    output.scrollTop = output.scrollHeight;
+                }
+            }
+            showToast(state.shellRootMode ? 'Shell root mode enabled' : 'Shell root mode disabled', 'info');
         },
         clearShell() {
             const output = document.getElementById('shellOutput');
@@ -1452,7 +1616,9 @@
                     backup: 'backupSelect',
                     exported: 'exportedSelect',
                     debuggable: 'debugSelect',
-                    permissions: 'permSelect'
+                    permissions: 'permSelect',
+                    appInfo: 'appInfoSelect',
+                    fullScan: 'fullScanSelect'
                 };
                 const selectId = selectMap[tab];
                 if (selectId) {
@@ -1469,6 +1635,7 @@
             }
         },
         logcatInterval: null,
+        logcatRunning: false,
         async startLogcat() {
             const filter = document.getElementById('logcatFilter')?.value.trim() || '';
             const output = document.getElementById('logcatOutput');
@@ -1481,13 +1648,15 @@
             stopBtn.classList.remove('hidden');
             status.textContent = 'Running';
             status.className = 'badge success';
+            this.logcatRunning = true;
             await adb.shell('logcat -c');
             const safeFilter = filter.replace(/[`$\\!"'|;&<>(){}[\]]/g, '');
             const grepCmd = safeFilter ? ` | grep -i "${safeFilter}"` : '';
-            this.logcatInterval = setInterval(async () => {
+            const poll = async () => {
+                if (!this.logcatRunning) return;
                 try {
                     const logs = await adb.shell(`logcat -d -v brief${grepCmd} | tail -50`);
-                    if (logs.trim()) {
+                    if (logs.trim() && this.logcatRunning) {
                         const lines = logs.trim().split('\n');
                         for (const line of lines) {
                             const div = document.createElement('div');
@@ -1500,11 +1669,16 @@
                     }
                 } catch (e) {
                 }
-            }, 1000);
+                if (this.logcatRunning) {
+                    this.logcatInterval = setTimeout(poll, 1000);
+                }
+            };
+            this.logcatInterval = setTimeout(poll, 500);
         },
         stopLogcat() {
+            this.logcatRunning = false;
             if (this.logcatInterval) {
-                clearInterval(this.logcatInterval);
+                clearTimeout(this.logcatInterval);
                 this.logcatInterval = null;
             }
             const startBtn = document.getElementById('logcatStartBtn');
@@ -1557,24 +1731,26 @@
                 const data = await auditor.getLocalStorageFiles(pkg);
                 let html = '';
                 const sections = [
-                    { key: 'sharedPrefs', title: 'SharedPreferences' },
-                    { key: 'databases', title: 'Databases' },
-                    { key: 'files', title: 'Files' }
+                    { key: 'sharedPrefs', title: 'SharedPreferences', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+                    { key: 'databases', title: 'Databases', icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4' },
+                    { key: 'files', title: 'Internal Files', icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z' },
+                    { key: 'external', title: 'External Storage', icon: 'M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8' }
                 ];
+                const encodedPkg = safeEncode(pkg);
                 for (const section of sections) {
                     if (data[section.key]?.length > 0) {
-                        html += `<div class="result-box"><div class="result-header"><strong>${section.title} (${data[section.key].length})</strong></div><div class="file-grid">`;
+                        html += `<div class="result-box"><div class="result-header"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:16px;height:16px;opacity:0.6"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${section.icon}"/></svg><strong>${section.title} (${data[section.key].length})</strong></div><div class="file-grid">`;
                         for (const f of data[section.key]) {
-                            const encodedPath = btoa(f.path);
-                            const encodedName = btoa(f.name);
-                            const encodedPkg = btoa(pkg);
+                            const encodedPath = safeEncode(f.path);
+                            const encodedName = safeEncode(f.name);
+                            const sizeStr = f.size && f.size !== '-' ? `<span class="file-row-size">${escapeHtml(f.size)}B</span>` : '';
                             html += `<div class="file-row">
                                 <div class="file-row-info">
                                     <div class="file-row-icon"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg></div>
-                                    <span class="file-row-name">${escapeHtml(f.name)}</span>
+                                    <span class="file-row-name">${escapeHtml(f.name)}</span>${sizeStr}
                                 </div>
                                 <div class="file-row-actions">
-                                    <button class="btn btn-sm btn-ghost" onclick="window.viewStorageFile('${encodedPkg}','${encodedPath}')">View</button>
+                                    <button class="btn btn-sm btn-ghost" onclick="window.viewStorageFile('${encodedPath}')">View</button>
                                     <button class="btn btn-sm btn-ghost" onclick="window.downloadStorageFile('${encodedPkg}','${encodedPath}','${encodedName}')">Download</button>
                                 </div>
                             </div>`;
@@ -1588,94 +1764,6 @@
                 results.innerHTML = html;
             } catch (e) {
                 results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
-            }
-        },
-        handleStorageView(index) {},
-        handleStorageDownload(index) {},
-        async viewFile(pkg, path) {
-            showLoading('Loading file...');
-            try {
-                let content;
-                if (path.startsWith('/sdcard/') || path.startsWith('/storage/emulated/')) {
-                    content = await adb.shell(`base64 "${path}"`);
-                } else {
-                    content = await adb.shell(`su -c "base64 '${path}'"`);
-                }
-                const binary = atob(content.trim().replace(/\s/g, ''));
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                const blob = new Blob([bytes]);
-                const reader = new FileReader();
-                reader.onload = function() {
-                    hideLoading();
-                    const textContent = reader.result;
-                    const fileName = path.split('/').pop() || 'file';
-                    const modal = document.createElement('div');
-                    modal.id = 'fileViewModal';
-                    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;';
-                    const inner = document.createElement('div');
-                    inner.style.cssText = 'background:#0f1015;border:1px solid rgba(255,255,255,0.1);border-radius:16px;max-width:800px;width:100%;max-height:85vh;display:flex;flex-direction:column;';
-                    const header = document.createElement('div');
-                    header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);';
-                    const title = document.createElement('span');
-                    title.style.cssText = 'font-weight:600;color:#fff;';
-                    title.textContent = fileName;
-                    const closeBtn = document.createElement('button');
-                    closeBtn.style.cssText = 'background:#1a1b24;border:none;width:32px;height:32px;border-radius:8px;cursor:pointer;color:#fff;font-size:18px;';
-                    closeBtn.textContent = '×';
-                    closeBtn.onclick = function() { modal.remove(); };
-                    header.appendChild(title);
-                    header.appendChild(closeBtn);
-                    const body = document.createElement('div');
-                    body.style.cssText = 'padding:20px;overflow:auto;flex:1;';
-                    const pre = document.createElement('pre');
-                    pre.style.cssText = 'font-family:monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:#a0a3b1;margin:0;';
-                    pre.textContent = textContent || '[Empty file]';
-                    body.appendChild(pre);
-                    inner.appendChild(header);
-                    inner.appendChild(body);
-                    modal.appendChild(inner);
-                    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
-                    const existing = document.getElementById('fileViewModal');
-                    if (existing) existing.remove();
-                    document.body.appendChild(modal);
-                };
-                reader.onerror = function() {
-                    hideLoading();
-                    showToast('Failed to read file content', 'error');
-                };
-                reader.readAsText(blob);
-            } catch (e) {
-                hideLoading();
-                showToast('Error: ' + (e.message || 'Unknown'), 'error');
-            }
-        },
-        async downloadStorageFile(pkg, path, name) {
-            showLoading('Downloading...');
-            try {
-                let content;
-                if (path.startsWith('/sdcard/') || path.startsWith('/storage/emulated/')) {
-                    content = await adb.shell(`base64 "${path}"`);
-                } else {
-                    content = await adb.shell(`su -c "base64 '${path}'"`);
-                }
-                const binary = atob(content.trim().replace(/\s/g, ''));
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                const blob = new Blob([bytes]);
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${pkg}_${name}`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                hideLoading();
-                showToast('Downloaded', 'success');
-            } catch (e) {
-                hideLoading();
-                showToast('Download failed', 'error');
             }
         },
         async checkBackup() {
@@ -1746,11 +1834,14 @@
             try {
                 const auditor = new SecurityAuditor(adb);
                 const result = await auditor.testDangerousPermissionsOnly(pkg);
+                const permFinding = result.findings?.find(f => f.type === 'granted_dangerous_permissions');
+                const perms = permFinding?.permissions || [];
                 let html = '<div class="result-box"><div class="result-header"><strong>Dangerous Permissions</strong></div>';
-                if (result.permissions?.length > 0) {
+                if (perms.length > 0) {
                     html += '<div class="perm-list" style="margin-top:12px">';
-                    for (const p of result.permissions) {
-                        html += `<span class="perm-tag">${p.replace('android.permission.', '')}</span>`;
+                    for (const p of perms) {
+                        const name = (p.permission || p).replace('android.permission.', '');
+                        html += `<span class="perm-tag">${escapeHtml(name)}</span>`;
                     }
                     html += '</div>';
                 } else {
@@ -1759,6 +1850,105 @@
                 html += '</div>';
                 results.innerHTML = html;
             } catch (e) {
+                results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
+            }
+        },
+        async loadAppInfo() {
+            const pkg = document.getElementById('appInfoSelect')?.value;
+            if (!pkg) { showToast('Select an application', 'warning'); return; }
+            const results = document.getElementById('appInfoResults');
+            results.innerHTML = '<div class="empty-state"><p>Loading info...</p></div>';
+            try {
+                const auditor = new SecurityAuditor(adb);
+                const info = await auditor.getAppInfo(pkg);
+                let flagsHtml = '';
+                if (info.flags && info.flags.length > 0) {
+                    flagsHtml = info.flags.map(f => {
+                        const danger = ['DEBUGGABLE', 'ALLOW_BACKUP', 'CLEARTEXT_TRAFFIC'].includes(f);
+                        return `<span class="badge ${danger ? 'fail' : 'pass'}" style="margin:2px">${escapeHtml(f)}</span>`;
+                    }).join('');
+                }
+                let html = '<div class="result-box">';
+                html += `<div class="result-header"><strong>${escapeHtml(pkg)}</strong></div>`;
+                html += '<div class="prop-list" style="margin-top:8px">';
+                const rows = [
+                    ['Version', (info.versionName || '?') + ' (' + (info.versionCode || '?') + ')'],
+                    ['Target SDK', info.targetSdk ? 'API ' + info.targetSdk + ' (Android ' + (new SecurityAuditor(adb)).sdkToAndroidVersion(parseInt(info.targetSdk)) + ')' : '?'],
+                    ['Min SDK', info.minSdk ? 'API ' + info.minSdk : '?'],
+                    ['Signing', info.signingVersion || '?'],
+                    ['UID', info.uid || '?'],
+                    ['Data Dir', info.dataDir || '?'],
+                    ['APK Path', info.apkPath || '?'],
+                    ['Data Size', info.dataSize || '?'],
+                    ['APK Size', info.apkSize || '?'],
+                    ['Installed', info.firstInstall || '?'],
+                    ['Last Updated', info.lastUpdate || '?']
+                ];
+                for (const [label, val] of rows) {
+                    html += `<div class="prop-row"><span class="prop-key">${escapeHtml(label)}</span><span class="prop-val" style="font-family:monospace;font-size:12px">${escapeHtml(val)}</span></div>`;
+                }
+                html += '</div>';
+                if (flagsHtml) {
+                    html += `<div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.06)"><strong style="font-size:12px;color:var(--lum-50)">Flags</strong><div style="margin-top:6px">${flagsHtml}</div></div>`;
+                }
+                html += '</div>';
+                results.innerHTML = html;
+            } catch (e) {
+                results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
+            }
+        },
+        async runFullScan() {
+            const pkg = document.getElementById('fullScanSelect')?.value;
+            if (!pkg) { showToast('Select an application', 'warning'); return; }
+            const results = document.getElementById('fullScanResults');
+            const progress = document.getElementById('fullScanProgress');
+            const statusEl = document.getElementById('fullScanStatus');
+            const bar = document.getElementById('fullScanBar');
+            results.innerHTML = '';
+            progress.classList.remove('hidden');
+            try {
+                const auditor = new SecurityAuditor(adb);
+                const scanResult = await auditor.runFullAudit(pkg, (name, current, total) => {
+                    statusEl.textContent = `Running: ${name} (${current}/${total})`;
+                    bar.style.width = Math.round((current / total) * 100) + '%';
+                });
+                progress.classList.add('hidden');
+                let html = '<div class="result-box" style="margin-top:12px">';
+                html += `<div class="result-header"><strong>Scan Report: ${escapeHtml(pkg)}</strong><span style="color:var(--lum-40);font-size:12px;margin-left:auto">${escapeHtml(scanResult.timestamp)}</span></div>`;
+                html += '<div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">';
+                html += `<div style="padding:8px 16px;border-radius:8px;background:rgba(76,175,80,0.1);text-align:center"><div style="font-size:20px;font-weight:700;color:var(--success)">${scanResult.summary.pass}</div><div style="font-size:11px;color:var(--lum-50)">Pass</div></div>`;
+                html += `<div style="padding:8px 16px;border-radius:8px;background:rgba(244,67,54,0.1);text-align:center"><div style="font-size:20px;font-weight:700;color:var(--danger)">${scanResult.summary.fail}</div><div style="font-size:11px;color:var(--lum-50)">Fail</div></div>`;
+                html += `<div style="padding:8px 16px;border-radius:8px;background:rgba(255,152,0,0.1);text-align:center"><div style="font-size:20px;font-weight:700;color:var(--warning)">${scanResult.summary.review}</div><div style="font-size:11px;color:var(--lum-50)">Review</div></div>`;
+                html += `<div style="padding:8px 16px;border-radius:8px;background:rgba(255,255,255,0.05);text-align:center"><div style="font-size:20px;font-weight:700;color:var(--lum-50)">${scanResult.summary.error}</div><div style="font-size:11px;color:var(--lum-50)">Error</div></div>`;
+                html += '</div></div>';
+                for (const test of scanResult.tests) {
+                    const badge = test.status === 'pass' ? 'pass' : test.status === 'fail' ? 'fail' : test.status === 'review' ? 'warning' : '';
+                    const label = test.status === 'pass' ? '✓ Pass' : test.status === 'fail' ? '✗ Fail' : test.status === 'review' ? '⚠ Review' : '? Error';
+                    html += `<div class="result-box" style="margin-top:8px"><div class="result-header"><span class="badge ${badge}">${label}</span><strong style="margin-left:8px">${escapeHtml(test.title || test.id)}</strong></div>`;
+                    if (test.description) {
+                        html += `<p style="margin-top:6px;color:var(--lum-50);font-size:12px">${escapeHtml(test.description)}</p>`;
+                    }
+                    if (test.findings && test.findings.length > 0) {
+                        html += '<div style="margin-top:8px">';
+                        for (const f of test.findings) {
+                            const note = f.note || f.type || '';
+                            const sev = f.severity || '';
+                            const sevColor = sev === 'high' ? 'var(--danger)' : sev === 'medium' ? 'var(--warning)' : 'var(--lum-60)';
+                            html += `<div style="padding:4px 0;font-size:12px;color:${sevColor}">• ${escapeHtml(note)}</div>`;
+                        }
+                        html += '</div>';
+                    }
+                    if (test.error) {
+                        html += `<p style="margin-top:6px;color:var(--danger);font-size:12px">${escapeHtml(test.error)}</p>`;
+                    }
+                    html += '</div>';
+                }
+                const blob = new Blob([JSON.stringify(scanResult, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                html += `<div style="margin-top:16px;text-align:center"><a href="${url}" download="${escapeAttr(pkg)}_security_scan.json" class="btn btn-ghost" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>Download Full Report (JSON)</a></div>`;
+                results.innerHTML = html;
+            } catch (e) {
+                progress.classList.add('hidden');
                 results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
             }
         }
@@ -1791,26 +1981,24 @@
     });
     navigate('overview');
     window.app = app;
-    window.viewStorageFile = async function(encodedPkg, encodedPath) {
-        const pkg = atob(encodedPkg);
-        const path = atob(encodedPath);
+    window.viewStorageFile = async function(encodedPath) {
+        const path = safeDecode(encodedPath);
+        const fileName = path.split('/').pop() || 'file';
         showLoading('Loading file...');
         try {
-            let content;
-            if (path.startsWith('/sdcard/') || path.startsWith('/storage/emulated/')) {
-                content = await adb.shell(`base64 "${path}"`);
-            } else {
-                content = await adb.shell(`su -c "base64 '${path}'"`);
+            const content = await shellReadBase64(path);
+            const clean = content.trim().replace(/\s/g, '');
+            if (!clean || clean.includes('Permission denied') || clean.includes('No such file') || clean.includes('not found')) {
+                throw new Error('Cannot read file — permission denied or not found');
             }
-            const binary = atob(content.trim().replace(/\s/g, ''));
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const bytes = base64ToBytes(clean);
             const blob = new Blob([bytes]);
             const reader = new FileReader();
             reader.onload = function() {
                 hideLoading();
                 const textContent = reader.result;
-                const fileName = path.split('/').pop() || 'file';
+                const existing = document.getElementById('fileViewModal');
+                if (existing) existing.remove();
                 const modal = document.createElement('div');
                 modal.id = 'fileViewModal';
                 modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;';
@@ -1819,13 +2007,20 @@
                 const header = document.createElement('div');
                 header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);';
                 const title = document.createElement('span');
-                title.style.cssText = 'font-weight:600;color:#fff;';
+                title.style.cssText = 'font-weight:600;color:#fff;font-family:monospace;font-size:13px;';
                 title.textContent = fileName;
+                const pathEl = document.createElement('span');
+                pathEl.style.cssText = 'font-size:11px;color:var(--lum-40);margin-left:8px;';
+                pathEl.textContent = path;
+                const headerLeft = document.createElement('div');
+                headerLeft.style.cssText = 'display:flex;flex-direction:column;gap:2px;overflow:hidden;flex:1;';
+                headerLeft.appendChild(title);
+                headerLeft.appendChild(pathEl);
                 const closeBtn = document.createElement('button');
-                closeBtn.style.cssText = 'background:#1a1b24;border:none;width:32px;height:32px;border-radius:8px;cursor:pointer;color:#fff;font-size:18px;';
-                closeBtn.textContent = '×';
+                closeBtn.style.cssText = 'background:#1a1b24;border:none;width:32px;height:32px;border-radius:8px;cursor:pointer;color:#fff;font-size:18px;flex-shrink:0;';
+                closeBtn.textContent = '\u00d7';
                 closeBtn.onclick = function() { modal.remove(); };
-                header.appendChild(title);
+                header.appendChild(headerLeft);
                 header.appendChild(closeBtn);
                 const body = document.createElement('div');
                 body.style.cssText = 'padding:20px;overflow:auto;flex:1;';
@@ -1837,8 +2032,6 @@
                 inner.appendChild(body);
                 modal.appendChild(inner);
                 modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
-                const existing = document.getElementById('fileViewModal');
-                if (existing) existing.remove();
                 document.body.appendChild(modal);
             };
             reader.onerror = function() {
@@ -1852,20 +2045,17 @@
         }
     };
     window.downloadStorageFile = async function(encodedPkg, encodedPath, encodedName) {
-        const pkg = atob(encodedPkg);
-        const path = atob(encodedPath);
-        const name = atob(encodedName);
+        const pkg = safeDecode(encodedPkg);
+        const path = safeDecode(encodedPath);
+        const name = safeDecode(encodedName);
         showLoading('Downloading...');
         try {
-            let content;
-            if (path.startsWith('/sdcard/') || path.startsWith('/storage/emulated/')) {
-                content = await adb.shell(`base64 "${path}"`);
-            } else {
-                content = await adb.shell(`su -c "base64 '${path}'"`);
+            const content = await shellReadBase64(path);
+            const clean = content.trim().replace(/\s/g, '');
+            if (!clean || clean.includes('Permission denied') || clean.includes('No such file')) {
+                throw new Error('Cannot read file — permission denied or not found');
             }
-            const binary = atob(content.trim().replace(/\s/g, ''));
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const bytes = base64ToBytes(clean);
             const blob = new Blob([bytes]);
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1876,10 +2066,10 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
             hideLoading();
-            showToast('Downloaded', 'success');
+            showToast('Downloaded: ' + name + ' (' + formatSize(bytes.length) + ')', 'success');
         } catch (e) {
             hideLoading();
-            showToast('Download failed', 'error');
+            showToast('Download failed: ' + (e.message || 'Unknown'), 'error');
         }
     };
 })();

@@ -943,14 +943,15 @@
 
             try {
                 const dataDir = `/data/data/${packageName}`;
+                const safeDd = dataDir.replace(/["\\$`]/g, '\\$&');
 
-                const prefsOutput = await this.adb.shell(`su -c "ls -la ${dataDir}/shared_prefs/" 2>/dev/null || echo "ACCESS_DENIED"`);
+                const prefsOutput = await this.adb.shell(`su -c "ls -la \\"${safeDd}/shared_prefs/\\"" 2>/dev/null || echo "ACCESS_DENIED"`);
                 if (prefsOutput && !prefsOutput.includes('ACCESS_DENIED') && !prefsOutput.includes('No such file') && !prefsOutput.includes('not found')) {
                     const lines = prefsOutput.split('\n').filter(l => l.trim() && !l.startsWith('total'));
                     for (const line of lines) {
                         const parts = line.trim().split(/\s+/);
-                        if (parts.length >= 5) {
-                            const fileName = parts[parts.length - 1];
+                        if (parts.length >= 7) {
+                            const fileName = parts.slice(7).join(' ');
                             if (fileName && fileName !== '.' && fileName !== '..') {
                                 const size = parts[4] || '0';
                                 result.sharedPrefs.push({
@@ -964,13 +965,13 @@
                     }
                 }
 
-                const dbOutput = await this.adb.shell(`su -c "ls -la ${dataDir}/databases/" 2>/dev/null || echo "ACCESS_DENIED"`);
+                const dbOutput = await this.adb.shell(`su -c "ls -la \\"${safeDd}/databases/\\"" 2>/dev/null || echo "ACCESS_DENIED"`);
                 if (dbOutput && !dbOutput.includes('ACCESS_DENIED') && !dbOutput.includes('No such file') && !dbOutput.includes('not found')) {
                     const lines = dbOutput.split('\n').filter(l => l.trim() && !l.startsWith('total'));
                     for (const line of lines) {
                         const parts = line.trim().split(/\s+/);
-                        if (parts.length >= 5) {
-                            const fileName = parts[parts.length - 1];
+                        if (parts.length >= 7) {
+                            const fileName = parts.slice(7).join(' ');
                             if (fileName && fileName !== '.' && fileName !== '..' && !fileName.endsWith('-journal') && !fileName.endsWith('-wal') && !fileName.endsWith('-shm')) {
                                 const size = parts[4] || '0';
                                 result.databases.push({
@@ -984,15 +985,15 @@
                     }
                 }
 
-                const filesOutput = await this.adb.shell(`su -c "find ${dataDir}/files/ -type f 2>/dev/null" | head -50 || echo "ACCESS_DENIED"`);
+                const filesOutput = await this.adb.shell(`su -c "find \\"${safeDd}/files/\\" -type f 2>/dev/null | head -50" || echo "ACCESS_DENIED"`);
                 if (filesOutput && !filesOutput.includes('ACCESS_DENIED') && !filesOutput.includes('No such file') && !filesOutput.includes('not found')) {
                     const filePaths = filesOutput.split('\n').filter(l => l.trim() && l.startsWith('/'));
                     for (const filePath of filePaths) {
                         if (filePath) {
-                            const fileName = filePath.split('/').pop();
+                            const fileName = filePath.trim().split('/').pop();
                             result.files.push({
                                 name: fileName,
-                                path: filePath,
+                                path: filePath.trim(),
                                 size: '-',
                                 type: this.getFileType(fileName)
                             });
@@ -1000,13 +1001,13 @@
                     }
                 }
 
-                const cacheOutput = await this.adb.shell(`su -c "ls -la ${dataDir}/cache/" 2>/dev/null || echo "ACCESS_DENIED"`);
+                const cacheOutput = await this.adb.shell(`su -c "ls -la \\"${safeDd}/cache/\\"" 2>/dev/null || echo "ACCESS_DENIED"`);
                 if (cacheOutput && !cacheOutput.includes('ACCESS_DENIED') && !cacheOutput.includes('No such file') && !cacheOutput.includes('not found')) {
                     const lines = cacheOutput.split('\n').filter(l => l.trim() && !l.startsWith('total'));
                     for (const line of lines) {
                         const parts = line.trim().split(/\s+/);
-                        if (parts.length >= 5) {
-                            const fileName = parts[parts.length - 1];
+                        if (parts.length >= 7) {
+                            const fileName = parts.slice(7).join(' ');
                             if (fileName && fileName !== '.' && fileName !== '..') {
                                 const size = parts[4] || '0';
                                 result.files.push({
@@ -1020,13 +1021,14 @@
                     }
                 }
 
-                const extOutput = await this.adb.shell(`ls -la /sdcard/Android/data/${packageName}/ 2>/dev/null || echo "NOT_FOUND"`);
+                const safeExtDir = `/sdcard/Android/data/${packageName}/`.replace(/["\\$`]/g, '\\$&');
+                const extOutput = await this.adb.shell(`ls -la "${safeExtDir}" 2>/dev/null || echo "NOT_FOUND"`);
                 if (extOutput && !extOutput.includes('NOT_FOUND') && !extOutput.includes('No such file')) {
                     const lines = extOutput.split('\n').filter(l => l.trim() && !l.startsWith('total'));
                     for (const line of lines) {
                         const parts = line.trim().split(/\s+/);
-                        if (parts.length >= 5) {
-                            const fileName = parts[parts.length - 1];
+                        if (parts.length >= 7) {
+                            const fileName = parts.slice(7).join(' ');
                             if (fileName && fileName !== '.' && fileName !== '..') {
                                 const size = parts[4] || '0';
                                 result.external.push({
@@ -1055,12 +1057,12 @@
             
             try {
                 let content = '';
-                const safePath = filePath.replace(/"/g, '\\"');
+                const safePath = filePath.replace(/["\\$`]/g, '\\$&');
                 
                 if (filePath.startsWith('/sdcard/') || filePath.startsWith('/storage/emulated/')) {
                     content = await this.adb.shell(`cat "${safePath}"`);
                 } else {
-                    content = await this.adb.shell(`su -c "cat '${filePath}'"`);
+                    content = await this.adb.shell(`su -c "cat \\"${safePath}\\""`);
                 }
                 
                 if (!content || content.trim() === '') {
@@ -1193,6 +1195,166 @@
                 results.error = e.message;
             }
 
+            return results;
+        }
+
+
+        async getAppInfo(packageName) {
+            if (!isValidPackageName(packageName)) throw new Error('Invalid package name');
+            const info = { packageName };
+            try {
+                const dump = await this.adb.shell(`dumpsys package ${packageName}`);
+                const match = (re) => { const m = dump.match(re); return m ? m[1].trim() : null; };
+                info.versionName = match(/versionName=(\S+)/);
+                info.versionCode = match(/versionCode=(\d+)/);
+                info.targetSdk = match(/targetSdk=(\d+)/);
+                info.minSdk = match(/minSdk=(\d+)/);
+                info.firstInstall = match(/firstInstallTime=(.+)/);
+                info.lastUpdate = match(/lastUpdateTime=(.+)/);
+                info.dataDir = match(/dataDir=(\S+)/);
+                info.uid = match(/userId=(\d+)/);
+                info.flags = [];
+                if (dump.includes('DEBUGGABLE')) info.flags.push('DEBUGGABLE');
+                if (dump.includes('ALLOW_BACKUP')) info.flags.push('ALLOW_BACKUP');
+                if (dump.includes('SYSTEM')) info.flags.push('SYSTEM');
+                if (dump.includes('HAS_CODE')) info.flags.push('HAS_CODE');
+                if (dump.includes('LARGE_HEAP')) info.flags.push('LARGE_HEAP');
+                if (dump.includes('usesCleartextTraffic=true')) info.flags.push('CLEARTEXT_TRAFFIC');
+                const sigMatch = dump.match(/apkSigningVersion[:=]\s*(\d+)/);
+                info.signingVersion = sigMatch ? 'v' + sigMatch[1] : null;
+                const sizeOut = await this.adb.shell(`du -sh /data/data/${packageName}/ 2>/dev/null || echo "0"`);
+                const sizeMatch = sizeOut.match(/^([\d.]+\S+)/);
+                info.dataSize = sizeMatch ? sizeMatch[1] : null;
+                const apkPath = match(/codePath=(\S+)/);
+                if (apkPath) {
+                    info.apkPath = apkPath;
+                    const apkSizeOut = await this.adb.shell(`du -sh "${apkPath.replace(/"/g, '\\"')}" 2>/dev/null || echo "0"`);
+                    const apkSizeMatch = apkSizeOut.match(/^([\d.]+\S+)/);
+                    info.apkSize = apkSizeMatch ? apkSizeMatch[1] : null;
+                }
+            } catch (e) {
+                info.error = e.message;
+            }
+            return info;
+        }
+
+        async getRunningProcesses(packageName) {
+            if (packageName && !isValidPackageName(packageName)) throw new Error('Invalid package name');
+            try {
+                let cmd = 'ps -A -o PID,USER,VSZ,RSS,STAT,NAME 2>/dev/null || ps -A 2>/dev/null || ps';
+                if (packageName) {
+                    cmd += ` | grep -i "${packageName}"`;
+                }
+                const output = await this.adb.shell(cmd);
+                const lines = output.split('\n').filter(l => l.trim());
+                const procs = [];
+                for (const line of lines) {
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
+                        procs.push({
+                            pid: parts[0],
+                            user: parts[1],
+                            vsz: parts[2] || '-',
+                            rss: parts[3] || '-',
+                            stat: parts[4] || '-',
+                            name: parts.slice(5).join(' ') || parts[parts.length - 1]
+                        });
+                    }
+                }
+                return procs;
+            } catch (e) {
+                return [];
+            }
+        }
+
+        async getActiveConnections(packageName) {
+            if (packageName && !isValidPackageName(packageName)) throw new Error('Invalid package name');
+            try {
+                let uid = '';
+                if (packageName) {
+                    const uidOut = await this.adb.shell(`dumpsys package ${packageName} | grep userId=`);
+                    const uidMatch = uidOut.match(/userId=(\d+)/);
+                    uid = uidMatch ? uidMatch[1] : '';
+                }
+                const tcp = await this.adb.shell('cat /proc/net/tcp 2>/dev/null');
+                const tcp6 = await this.adb.shell('cat /proc/net/tcp6 2>/dev/null');
+                const all = (tcp + '\n' + tcp6).split('\n').filter(l => l.trim() && !l.includes('local_address'));
+                const connections = [];
+                for (const line of all) {
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length < 4) continue;
+                    const localAddr = parts[1];
+                    const remoteAddr = parts[2];
+                    const state = parts[3];
+                    const lineUid = parts[7];
+                    if (uid && lineUid !== uid) continue;
+                    const parseAddr = (hex) => {
+                        const [ip, port] = hex.split(':');
+                        const p = parseInt(port, 16);
+                        if (ip.length === 8) {
+                            const o = [];
+                            for (let i = ip.length - 2; i >= 0; i -= 2) {
+                                o.push(parseInt(ip.substr(i, 2), 16));
+                            }
+                            return o.join('.') + ':' + p;
+                        }
+                        return ip + ':' + p;
+                    };
+                    const states = { '01': 'ESTABLISHED', '02': 'SYN_SENT', '06': 'TIME_WAIT', '0A': 'LISTEN', '08': 'CLOSE_WAIT' };
+                    connections.push({
+                        local: parseAddr(localAddr),
+                        remote: parseAddr(remoteAddr),
+                        state: states[state] || state,
+                        uid: lineUid
+                    });
+                }
+                return connections;
+            } catch (e) {
+                return [];
+            }
+        }
+
+        async testIntentFilters(packageName) {
+            if (!isValidPackageName(packageName)) throw new Error('Invalid package name');
+            const results = {
+                id: 'INTENT-FILTERS',
+                category: 'MASVS-PLATFORM',
+                title: 'Intent Filter Analysis',
+                description: 'Analyzes intent filters for potential attack surface',
+                findings: [],
+                severity: 'info',
+                status: 'pass'
+            };
+            try {
+                const dump = await this.adb.shell(`dumpsys package ${packageName} | grep -A 10 "intent-filter"`);
+                const schemes = new Set();
+                const hosts = new Set();
+                const actions = new Set();
+                const lines = dump.split('\n');
+                for (const line of lines) {
+                    const schemeMatch = line.match(/scheme="([^"]+)"/);
+                    if (schemeMatch) schemes.add(schemeMatch[1]);
+                    const hostMatch = line.match(/host="([^"]+)"/);
+                    if (hostMatch) hosts.add(hostMatch[1]);
+                    const actionMatch = line.match(/Action:\s*"([^"]+)"/);
+                    if (actionMatch) actions.add(actionMatch[1]);
+                }
+                if (schemes.size > 0) {
+                    results.findings.push({ type: 'url_schemes', schemes: Array.from(schemes), note: 'Custom URL schemes registered' });
+                    if (schemes.has('http') || schemes.has('https')) {
+                        results.findings.push({ type: 'app_links', hosts: Array.from(hosts), note: 'App Links / deep links detected' });
+                    }
+                }
+                if (actions.size > 0) {
+                    const customActions = Array.from(actions).filter(a => !a.startsWith('android.'));
+                    if (customActions.length > 0) {
+                        results.findings.push({ type: 'custom_actions', actions: customActions, note: 'Custom intent actions' });
+                    }
+                }
+            } catch (e) {
+                results.status = 'error';
+                results.error = e.message;
+            }
             return results;
         }
 
