@@ -218,12 +218,7 @@ This project is licensed under the License: CC BY-NC-ND 4.0
 
 This tool is intended for authorized security testing and educational purposes only. Users are responsible for ensuring they have proper authorization before testing any device. The authors are not responsible for any misuse of this tool.
 
-## Author
 
-**Sandeep Wawdane**
-
-- LinkedIn: [@sandeepwawdane](https://www.linkedin.com/in/sandeepwawdane/)
-- GitHub: [@thecybersandeep](https://github.com/thecybersandeep)
 
 ---
 
