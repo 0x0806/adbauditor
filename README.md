@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://0x0806.github.io/adbauditor/">Live</a> •
   <a href="#features">Features</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
@@ -66,23 +67,40 @@ Safer (injection/XSS fixes, CSP), more reliable (serialised USB transport, real 
 
 ## Screenshots
 
-### 🔐 Android Security Auditing Dashboard
-Modern, client-side Android security auditing interface with WebUSB + ADB support. Connect devices securely and perform deep analysis without uploading data.
-  
-![ADB Auditor Dashboard](https://github.com/user-attachments/assets/eab09ce1-ce31-44cd-b02d-131fa14d5faa)
+Captured from the hosted app at **https://0x0806.github.io/adbauditor/** using a built-in fake phone (demo data only - no real device or private data is shown). Regenerate them with `npm run screenshots`.
 
----
+### 🔐 Landing page
+![ADB Auditor landing page](img/screenshots/landing.png)
 
-### 🧩 Local Storage & App Data Analysis (Root)
-Analyze application storage with root access, including SharedPreferences, databases, and internal files for advanced security assessments.
-  
-![ADB File Browser](https://github.com/user-attachments/assets/75fa83b4-e195-488b-9fdc-5fa248cb2e30)
----
+### 📱 Device overview
+Hardware, build and security facts at a glance: Android version, patch level, storage, RAM, battery, bootloader and verified-boot state.
 
-### 📁 Root File Browser via ADB
-Full-featured file browser powered by ADB with optional root mode, enabling navigation, upload, download, and inspection of device file systems.
-  
-![Root Storage Analysis](https://github.com/user-attachments/assets/fbd571d0-3790-4f85-b3bd-807c878087f9)
+![Device overview](img/screenshots/overview.png)
+
+### 📁 File browser
+Browse, filter and sort the device filesystem with optional root mode; upload, download, rename, delete, preview, checksum, edit or zip a folder.
+
+![File browser](img/screenshots/files.png)
+
+### 🛡️ Security scan with risk score
+One click runs the full audit and produces a 0-100 risk score, per-check results with fix advice, and JSON / Markdown / HTML / CSV export.
+
+![Security scan report](img/screenshots/security-scan.png)
+
+### 🔬 Offline APK analyzer
+Manifest findings, signing certificates, DEX indicators and exported components - computed entirely in your browser.
+
+![APK analyzer](img/screenshots/apk-analyzer.png)
+
+### 🗃️ SQLite viewer
+Open app databases pulled from the device (with WAL support) and export tables to CSV.
+
+![SQLite viewer](img/screenshots/sqlite-viewer.png)
+
+### ⌨️ Command palette
+`Ctrl/Cmd + K` jumps to any tool.
+
+![Command palette](img/screenshots/command-palette.png)
 
 
 ## Requirements
@@ -102,7 +120,10 @@ Full-featured file browser powered by ADB with optional root mode, enabling navi
 
 ## Installation
 
-### Option 1: Run Locally (No Hosting Required)
+### Option 1: Use online
+Open **https://0x0806.github.io/adbauditor/** in Chrome, Edge or Opera. Everything runs in your browser; it also works offline after the first visit.
+
+### Option 2: Run Locally (No Hosting Required)
 
 ```bash
 # Clone the repository
@@ -115,7 +136,7 @@ cd adbauditor
 google-chrome index.html
 ```
 
-### Option 2: Self-Host
+### Option 3: Self-Host
 
 ```
 # Clone the repository
@@ -132,7 +153,7 @@ npx serve .
 php -S localhost:8080
 ```
 
-### Option 3: Docker
+### Option 4: Docker
 
 ```
 # Using Docker Compose
@@ -184,7 +205,7 @@ adbauditor/
 ├── docs/                   # API.md, SECURITY.md
 ├── img/logo.svg
 ├── index.html, 404.html, sw.js, manifest.webmanifest
-├── CHANGELOG.md, NOTICE.md, LICENSE
+├── CHANGELOG.md, NOTICE.md
 └── Dockerfile, nginx.conf, docker-compose.yml, .github/workflows/ci.yml
 ```
 
@@ -206,6 +227,7 @@ adbauditor/
 npm run lint       # syntax check
 npm test           # 131 unit tests (mock ADB device, auditor, APK analyzer, SQLite, toolkit)
 npm run test:e2e   # headless Chromium with a fake WebUSB device
+npm run test:site  # checks the deployed site (assets, CSP, offline, 404, connected session)
 ```
 
 Protocol and device-control code is tested against a scriptable mock device, not physical hardware. Set `ADBAUD_APK_DIR` to a folder of your own APKs to smoke-test the analyzer on real files.
@@ -242,7 +264,7 @@ Protocol and device-control code is tested against a scriptable mock device, not
 
 ## License
 
-This project is licensed under CC BY-NC-ND 4.0, Copyright (c) 2026 Sandeep (original author). See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). Note that the NoDerivatives term means modified versions should be distributed only with the original author's permission.
+This project is licensed under CC BY-NC-ND 4.0, Copyright (c) 2026 Sandeep (original author). See the original [LICENSE](https://github.com/thecybersandeep/adbauditor/blob/main/LICENSE) and [NOTICE.md](NOTICE.md). Note that the NoDerivatives term means modified versions should be distributed only with the original author's permission.
 
 
 
