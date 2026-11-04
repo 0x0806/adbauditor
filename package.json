@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test --test-force-exit --test-timeout=20000 tests/",
     "lint": "node scripts/check-syntax.js",
+    "test:e2e": "node tests/e2e/run.js",
     "serve": "python3 -m http.server 8080"
   },
   "engines": { "node": ">=18" },

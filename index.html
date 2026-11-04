@@ -6,17 +6,20 @@
     <title>ADB Auditor - Professional Android Security Analysis Tool</title>
     <meta name="description" content="Professional Android security auditing platform for penetration testers and cybersecurity professionals. Analyze apps, extract APKs, browse files, and perform comprehensive security assessments via WebUSB.">
     <meta name="keywords" content="ADB, Android Debug Bridge, Android Security, APK Analysis, Mobile Security, Penetration Testing, Security Audit, WebUSB, Android Forensics, App Security">
-    <meta name="author" content="Sandeep Wawdane">
+    <meta name="author" content="Sandeep Wawdane (original creator); enhanced by 0x0806">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; script-src-attr 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="referrer" content="no-referrer">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="img/logo.svg" type="image/svg+xml">
     <meta name="robots" content="index, follow">
     <meta property="og:title" content="ADB Auditor - Professional Android Security Analysis Tool">
     <meta property="og:description" content="Professional Android security auditing platform. Analyze apps, extract APKs, browse files, and perform comprehensive security assessments via WebUSB.">
     <meta property="og:type" content="website">
-    <meta property="og:image" content="https://raw.githubusercontent.com/thecybersandeep/adbauditor/main/img/logo.svg">
+    <meta property="og:image" content="https://raw.githubusercontent.com/0x0806/adbauditor/main/img/logo.svg">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="ADB Auditor - Professional Android Security Analysis Tool">
     <meta name="twitter:description" content="Professional Android security auditing platform for penetration testers and cybersecurity professionals.">
     <meta name="theme-color" content="#0a0a0f">
-    <link rel="canonical" href="https://adbauditor.com/">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -2820,9 +2823,44 @@
             .tech-grid { grid-template-columns: 1fr; }
             .privacy-badge { flex-wrap: wrap; justify-content: center; }
         }
+
+        /* ---- 0x0806 enhancements ---- */
+        .skip-link { position: absolute; left: -9999px; top: 8px; background: var(--pulse); color: #fff; padding: 8px 14px; border-radius: 8px; z-index: 10000; }
+        .skip-link:focus { left: 8px; }
+        :focus-visible { outline: 2px solid var(--pulse); outline-offset: 2px; }
+        .ab-banner { position: sticky; top: 0; z-index: 9998; background: #7c2d12; color: #fff; padding: 10px 16px; text-align: center; font-size: 13px; }
+        .ab-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.72); display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 20px; }
+        .ab-modal { background: var(--depth-3); border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; width: 100%; max-width: 480px; max-height: 85vh; display: flex; flex-direction: column; }
+        .ab-modal.wide { max-width: 860px; }
+        .ab-modal-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.06); color: var(--lum-100); word-break: break-all; }
+        .ab-modal-x { background: var(--depth-5); border: none; color: #fff; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 18px; flex-shrink: 0; }
+        .ab-modal-body { padding: 20px; overflow: auto; flex: 1; color: var(--lum-70); font-size: 14px; line-height: 1.6; }
+        .ab-modal-body a { color: var(--pulse); }
+        .ab-modal-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 14px 20px; border-top: 1px solid rgba(255,255,255,0.06); flex-wrap: wrap; }
+        .ab-pre { font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: #a0a3b1; margin: 0; }
+        .ab-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+        .ab-table th, .ab-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); white-space: nowrap; }
+        .ab-table th { color: var(--lum-50); font-weight: 600; cursor: pointer; user-select: none; }
+        .ab-table tbody tr[data-pkg] { cursor: pointer; }
+        .ab-table tbody tr[data-pkg]:hover { background: rgba(255,255,255,0.04); }
+        .ab-table .mono, .mono { font-family: 'JetBrains Mono', monospace; }
+        .ab-palette-list { margin-top: 10px; max-height: 320px; overflow: auto; }
+        .ab-palette-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border-radius: 8px; cursor: pointer; color: var(--lum-70); }
+        .ab-palette-item.sel, .ab-palette-item:hover { background: rgba(99,102,241,0.15); color: var(--lum-100); }
+        .stat-sub { font-size: 11px; color: var(--lum-40); margin-top: 2px; }
+        .file-toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; flex-wrap: wrap; }
+        .file-toolbar .search-input { flex: 1; min-width: 160px; }
+        .file-bookmarks { display: flex; gap: 6px; padding: 0 12px 8px; flex-wrap: wrap; }
+        .file-link { color: var(--lum-40); font-size: 12px; }
+        .file-action-btn.danger:hover { color: var(--alert, #ef4444); }
+        .logcat-output.nowrap { white-space: pre; overflow-x: auto; }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+        }
     </style>
 </head>
 <body data-version="5357323032365357">
+    <a class="skip-link" href="#contentArea">Skip to content</a>
     <div class="ambient">
         <div class="ambient-orb orb-1"></div>
         <div class="ambient-orb orb-2"></div>
@@ -2898,10 +2936,10 @@
             </div>
         </nav>
 
-        <main class="main" id="contentArea"></main>
+        <main class="main" id="contentArea" tabindex="-1"></main>
     </div>
 
-    <div class="toast-container" id="toastContainer"></div>
+    <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 
     <div class="modal-overlay" id="tcpModal">
         <div class="modal">
@@ -2937,8 +2975,10 @@
         <div class="loading-subtext" id="loadingSubtext"></div>
     </div>
 
+    <script src="js/utils.js"></script>
     <script src="js/adb-core.js"></script>
     <script src="js/security-auditor.js"></script>
     <script src="js/app.js"></script>
+    <script src="js/register-sw.js"></script>
 </body>
 </html>

@@ -1,16 +1,26 @@
-/** @preserve @author Sandeep Wawdane @license MIT */
+/**
+ * ADB Auditor - application UI.
+ * @preserve
+ * @author Sandeep Wawdane (original creator of ADB Auditor)
+ * @contributor 0x0806 (security hardening, new features, accessibility)
+ * @license See LICENSE (CC BY-NC-ND 4.0, (c) Sandeep Wawdane)
+ */
 (function() {
     'use strict';
 
-    const CONFIG = { buildKey: 'c2FuZGVlcHdhd2RhbmU=', version: 2026 };
+    const CONFIG = { buildKey: 'c2FuZGVlcHdhd2RhbmU=', version: 2026 };   // original-author watermark - do not remove
+    const U = window.ABUtils;
 
     const state = {
         connected: false,
         currentSection: 'overview',
         deviceInfo: {},
         apps: [],
+        appFilter: '',
         currentPath: '/storage/emulated/0',
         files: [],
+        fileFilter: '',
+        fileSort: { key: 'name', dir: 1 },
         shellHistory: [],
         shellHistoryIndex: -1,
         shellCwd: '',
@@ -19,54 +29,80 @@
         securityApps: [],
         currentSecurityTab: 'localStorage',
         screenshotBlob: null,
+        screenshotUrl: null,
         devices: [],
         selectedDeviceSerial: null,
         addMenuOpen: false,
         rootMode: false,
         tcpModalOpen: false
     };
-    const escapeHtml = (str) => {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = String(str);
-        return div.innerHTML;
+
+    const store = {
+        get(key, fallback) {
+            try { const v = localStorage.getItem('ab.' + key); return v === null ? fallback : JSON.parse(v); } catch (e) { return fallback; }
+        },
+        set(key, value) {
+            try { localStorage.setItem('ab.' + key, JSON.stringify(value)); } catch (e) { /* storage may be unavailable */ }
+        }
     };
-    const escapeShellArg = (str) => {
-        if (!str) return '';
-        return String(str).replace(/[`$\\!"']/g, '\\$&');
-    };
-    const escapeAttr = (str) => {
-        if (!str) return '';
-        return String(str).replace(/[&<>"']/g, (c) => ({
-            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-        }[c]));
-    };
+
+    const escapeHtml = U.escapeHtml;
+    const escapeAttr = U.escapeAttr;
+    const shQuote = U.shQuote;
     const safeEncode = (str) => {
-        try { return btoa(unescape(encodeURIComponent(str))); } catch(e) { return btoa(str); }
+        try { return btoa(unescape(encodeURIComponent(str))); } catch (e) { return btoa(str); }
     };
     const safeDecode = (str) => {
-        try { return decodeURIComponent(escape(atob(str))); } catch(e) { return atob(str); }
+        try { return decodeURIComponent(escape(atob(str))); } catch (e) { return atob(str); }
     };
-    const shellQuote = (path) => {
-        return '"' + String(path).replace(/["\\$`]/g, '\\$&') + '"';
-    };
-    async function shellReadBase64(path) {
-        const q = shellQuote(path);
-        if (path.startsWith('/sdcard/') || path.startsWith('/storage/emulated/')) {
-            return await adb.shell('base64 ' + q);
-        }
-        return await adb.shell('su -c "base64 ' + q.replace(/"/g, '\\"') + '"');
-    }
-    function base64ToBytes(b64) {
-        const clean = b64.trim().replace(/\s/g, '');
-        if (!clean) throw new Error('Empty file or access denied');
-        const binary = atob(clean);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        return bytes;
-    }
+    const base64ToBytes = U.base64ToBytes;
     let adb = null;
     let deviceManager = null;
+
+    const tmpName = () => `/data/local/tmp/.adbaud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    /** Read a file as root: copy to a temp file the shell user can read, pull it over sync, clean up. */
+    async function pullAsRoot(path, onProgress) {
+        const tmp = tmpName();
+        const r = await adb.shell(U.suWrap(`cp ${shQuote(path)} ${shQuote(tmp)} && chmod 644 ${shQuote(tmp)}`) + ' 2>&1');
+        if (r.trim()) throw new Error(r.trim().split('\n')[0]);
+        try {
+            return await adb.pullFile(tmp, onProgress);
+        } finally {
+            adb.shell(`rm -f ${shQuote(tmp)}`).catch(() => {});
+        }
+    }
+
+    /** Write a file as root: push to a temp file, then `su cp` it into place. */
+    async function pushAsRoot(dest, bytes, onProgress) {
+        const tmp = tmpName();
+        await adb.pushFile(tmp, bytes, 0o644, onProgress);
+        try {
+            const r = await adb.shell(U.suWrap(`cp ${shQuote(tmp)} ${shQuote(dest)}`) + ' 2>&1');
+            if (r.trim()) throw new Error(r.trim().split('\n')[0]);
+        } finally {
+            adb.shell(`rm -f ${shQuote(tmp)}`).catch(() => {});
+        }
+    }
+
+    const isSdcardPath = (p) => p.startsWith('/sdcard/') || p.startsWith('/storage/') || p === '/sdcard';
+
+    /** Read any device path: plain sync pull where possible, root copy otherwise. */
+    async function readDeviceFile(path, onProgress, forceRoot = false) {
+        if (forceRoot || state.rootMode) {
+            if (isSdcardPath(path) && !forceRoot) return adb.pullFile(path, onProgress);
+            return pullAsRoot(path, onProgress);
+        }
+        try {
+            return await adb.pullFile(path, onProgress);
+        } catch (e) {
+            if (!isSdcardPath(path) && /denied|permission/i.test(e.message)) {
+                try { return await pullAsRoot(path, onProgress); } catch (e2) { /* fall through to original error */ }
+            }
+            throw e;
+        }
+    }
+
     const el = {
         connectBtn: document.getElementById('connectBtn'),
         disconnectBtn: document.getElementById('disconnectBtn'),
@@ -154,7 +190,7 @@
                                     Connect Device
                                 </span>
                             </button>
-                            <a href="https://github.com/thecybersandeep/adbauditor" target="_blank" rel="noopener" class="btn-hero btn-hero-secondary">
+                            <a href="https://github.com/0x0806/adbauditor" target="_blank" rel="noopener" class="btn-hero btn-hero-secondary">
                                 <span>
                                     <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                                     View Source
@@ -303,16 +339,16 @@
                 </section>
 
                 <footer class="landing-footer">
-                    <a href="https://github.com/thecybersandeep/adbauditor" target="_blank" rel="noopener noreferrer" class="github-link">
+                    <a href="https://github.com/0x0806/adbauditor" target="_blank" rel="noopener noreferrer" class="github-link">
                         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                         <span>Star on GitHub</span>
                     </a>
                     <span class="footer-divider"></span>
-                    <span>© 2026 A Project by</span>
-                    <a href="#" target="_blank" rel="noopener noreferrer">
-                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-                       0x0806
-                    </a>
+                    <span>Created by</span>
+                    <a href="https://github.com/thecybersandeep/adbauditor" target="_blank" rel="noopener noreferrer">Sandeep Wawdane</a>
+                    <span class="footer-divider"></span>
+                    <span>Enhanced &amp; maintained by</span>
+                    <a href="https://github.com/0x0806" target="_blank" rel="noopener noreferrer">0x0806</a>
                 </footer>
             </div>`,
         overview: `
@@ -320,6 +356,9 @@
                 <div class="page-header">
                     <h1 class="page-title">Device Overview</h1>
                     <div class="page-actions">
+                        <button class="btn btn-ghost" onclick="app.exportDeviceInfo()" title="Export device info as JSON">
+                            Export
+                        </button>
                         <button class="btn btn-ghost" onclick="app.loadOverview()">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                             Refresh
@@ -340,7 +379,7 @@
         apps: `
             <div class="page">
                 <div class="page-header">
-                    <h1 class="page-title">Applications</h1>
+                    <h1 class="page-title">Applications <span class="badge" id="appCount" aria-live="polite"></span></h1>
                     <div class="page-actions">
                         <button class="btn btn-ghost" id="toggleSystemApps">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -352,13 +391,13 @@
                         </button>
                     </div>
                 </div>
-                <div class="drop-zone" id="dropZone" onclick="document.getElementById('apkInput').click()">
-                    <input type="file" id="apkInput" accept=".apk" onchange="app.handleApkSelect(event)">
+                <div class="drop-zone" id="dropZone" role="button" tabindex="0" aria-label="Install APK: drop files or press Enter to browse" onclick="document.getElementById('apkInput').click()">
+                    <input type="file" id="apkInput" accept=".apk" multiple onchange="app.handleApkSelect(event)">
                     <div class="drop-icon">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
                     </div>
                     <h3>Install APK</h3>
-                    <p>Drop file or click to browse</p>
+                    <p>Drop file(s) or click to browse &mdash; select several APKs to install split APKs together</p>
                 </div>
                 <div class="search-box">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -385,6 +424,9 @@
                             Upload
                         </button>
                         <input type="file" id="fileUploadInput" multiple style="display:none" onchange="app.handleFileUpload(event)">
+                        <button class="btn btn-ghost" onclick="app.makeDirectory()" title="Create folder">
+                            New folder
+                        </button>
                         <button class="btn btn-ghost" onclick="app.navigateUp()">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
                             Up
@@ -397,12 +439,30 @@
                 </div>
                 <div class="card file-card" id="fileCard">
                     <div class="path-bar" id="pathBar"></div>
+                    <div class="file-toolbar">
+                        <input type="text" class="search-input" id="fileFilter" placeholder="Filter this folder..." aria-label="Filter files">
+                        <select id="fileSort" aria-label="Sort files">
+                            <option value="name:1">Name A-Z</option><option value="name:-1">Name Z-A</option>
+                            <option value="size:-1">Largest first</option><option value="size:1">Smallest first</option>
+                            <option value="date:-1">Newest first</option><option value="date:1">Oldest first</option>
+                        </select>
+                        <span class="badge" id="fileCount" aria-live="polite"></span>
+                    </div>
+                    <div class="file-bookmarks" id="fileBookmarks">
+                        <button class="btn btn-sm btn-ghost" data-path="/storage/emulated/0">Internal</button>
+                        <button class="btn btn-sm btn-ghost" data-path="/storage/emulated/0/Download">Downloads</button>
+                        <button class="btn btn-sm btn-ghost" data-path="/storage/emulated/0/Android/data">Android/data</button>
+                        <button class="btn btn-sm btn-ghost" data-path="/data/local/tmp">/data/local/tmp</button>
+                        <button class="btn btn-sm btn-ghost" data-path="/data/data">/data/data</button>
+                        <button class="btn btn-sm btn-ghost" data-path="/system">/system</button>
+                        <button class="btn btn-sm btn-ghost" data-path="/proc">/proc</button>
+                    </div>
                     <div class="file-drop-zone" id="fileDropZone">
                         <div class="drop-indicator">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
                             <span>Drop files here to upload</span>
                         </div>
-                        <div class="file-list" id="fileList">
+                        <div class="file-list" id="fileList" role="list">
                             <div class="empty-state"><p>Loading...</p></div>
                         </div>
                     </div>
@@ -416,6 +476,12 @@
                         <button class="btn btn-primary" onclick="app.captureScreenshot()">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/></svg>
                             Capture
+                        </button>
+                        <button class="btn btn-ghost" id="liveScreenshotBtn" aria-pressed="false" onclick="app.toggleLiveScreenshot()" title="Refresh the screenshot every 1.5 s">
+                            Live
+                        </button>
+                        <button class="btn btn-ghost" id="copyScreenshotBtn" disabled onclick="app.copyScreenshot()">
+                            Copy
                         </button>
                         <button class="btn btn-ghost" id="saveScreenshotBtn" disabled onclick="app.saveScreenshot()">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
@@ -440,6 +506,9 @@
                             <span class="toggle-slider"></span>
                             <span class="toggle-label">Root</span>
                         </label>
+                        <button class="btn btn-ghost" onclick="app.downloadShellTranscript()" title="Save transcript">
+                            Save
+                        </button>
                         <button class="btn btn-ghost" onclick="app.clearShell()">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                             Clear
@@ -454,11 +523,11 @@
                         <span class="shell-title">ADB Shell</span>
                     </div>
                     <div class="shell-output" id="shellOutput">
-                        <div class="shell-line" style="color: var(--lum-50);">Type commands and press Enter. Type 'help' for available commands.</div>
+                        <div class="shell-line" style="color: var(--lum-50);">Type commands and press Enter. Tab completes, Up/Down browse history. Type 'help' for details.</div>
                     </div>
                     <div class="shell-input-row">
                         <span class="shell-prompt-char" id="shellPrompt">$</span>
-                        <input type="text" class="shell-input" id="shellInput" placeholder="Enter command...">
+                        <input type="text" class="shell-input" id="shellInput" placeholder="Enter command..." aria-label="Shell command" autocomplete="off" autocapitalize="off" spellcheck="false">
                     </div>
                 </div>
             </div>`,
@@ -467,7 +536,7 @@
                 <div class="page-header">
                     <h1 class="page-title">Security Analysis</h1>
                 </div>
-                <div class="tab-bar">
+                <div class="tab-bar" role="tablist" aria-label="Security tools">
                     <button class="tab-btn active" data-tab="localStorage" onclick="app.switchSecurityTab('localStorage')">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
                         Storage
@@ -496,6 +565,18 @@
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                         App Info
                     </button>
+                    <button class="tab-btn" data-tab="device" onclick="app.switchSecurityTab('device')">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                        Device
+                    </button>
+                    <button class="tab-btn" data-tab="triage" onclick="app.switchSecurityTab('triage')">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        Triage
+                    </button>
+                    <button class="tab-btn" data-tab="network" onclick="app.switchSecurityTab('network')">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>
+                        Network
+                    </button>
                     <button class="tab-btn" data-tab="fullScan" onclick="app.switchSecurityTab('fullScan')">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
                         Full Scan
@@ -503,6 +584,16 @@
                 </div>
                 <div id="securityTabContent"></div>
             </div>`
+    };
+    const SELECT_MAP = {
+        localStorage: 'storageSelect',
+        backup: 'backupSelect',
+        exported: 'exportedSelect',
+        debuggable: 'debugSelect',
+        permissions: 'permSelect',
+        appInfo: 'appInfoSelect',
+        fullScan: 'fullScanSelect',
+        network: 'networkSelect'
     };
     const securityTabs = {
         localStorage: `
@@ -581,6 +672,46 @@
                 </div>
                 <div id="permResults"></div>
             </div>`,
+        device: `
+            <div class="security-panel">
+                <div class="panel-header">
+                    <div class="panel-title">Device Security Posture</div>
+                    <span class="badge">No app needed</span>
+                </div>
+                <p class="panel-desc">Checks the device itself: patch level, bootloader lock, verified boot, SELinux, ADB exposure, root and emulator indicators, accessibility services.</p>
+                <div class="form-row">
+                    <button class="btn btn-primary" onclick="app.runDeviceAudit()">Audit device</button>
+                    <span id="deviceAuditStatus" style="color:var(--lum-50);font-size:12px"></span>
+                </div>
+                <div id="deviceAuditResults"></div>
+            </div>`,
+        triage: `
+            <div class="security-panel">
+                <div class="panel-header">
+                    <div class="panel-title">App Triage</div>
+                    <span class="badge warning">All apps</span>
+                </div>
+                <p class="panel-desc">Quickly rank every installed app by risk: debuggable, backup, outdated SDK levels, installer and dangerous permissions. Click a row to run a full scan.</p>
+                <div class="form-row">
+                    <label class="root-toggle"><input type="checkbox" id="triageSystem"><span class="toggle-slider"></span><span class="toggle-label">Include system apps</span></label>
+                    <button class="btn btn-primary" onclick="app.runTriage()">Run triage</button>
+                    <span id="triageStatus" style="color:var(--lum-50);font-size:12px"></span>
+                </div>
+                <div style="background:var(--surface-2);border-radius:4px;height:4px;overflow:hidden;margin-top:8px"><div id="triageBar" style="background:var(--primary);height:100%;width:0%;transition:width 0.3s"></div></div>
+                <div id="triageResults"></div>
+            </div>`,
+        network: `
+            <div class="security-panel">
+                <div class="panel-header">
+                    <div class="panel-title">Network &amp; Processes</div>
+                </div>
+                <p class="panel-desc">Open TCP/UDP sockets and running processes, optionally filtered to one application.</p>
+                <div class="form-row">
+                    <select id="networkSelect"><option value="">All apps</option></select>
+                    <button class="btn btn-primary" onclick="app.loadNetwork()">Refresh</button>
+                </div>
+                <div id="networkResults"></div>
+            </div>`,
         logcat: `
             <div class="security-panel">
                 <div class="panel-header">
@@ -595,9 +726,12 @@
                         </button>
                     </div>
                 </div>
-                <p class="panel-desc">Stream live device logs with grep filter. Monitor app behavior in real-time.</p>
+                <p class="panel-desc">Live stream of the device log. Filter by text or /regex/, and by minimum level. The device log buffer is never cleared.</p>
                 <div class="logcat-controls">
-                    <input type="text" id="logcatFilter" class="logcat-input" placeholder="Filter (e.g. ActivityManager, Error, com.app.name)">
+                    <input type="text" id="logcatFilter" class="logcat-input" placeholder="Filter: text or /regex/ (e.g. ActivityManager, /error|fatal/)" aria-label="Log filter">
+                    <select id="logcatLevel" aria-label="Minimum level"><option value="V">Verbose+</option><option value="D">Debug+</option><option value="I">Info+</option><option value="W">Warn+</option><option value="E">Error+</option></select>
+                    <button class="btn btn-ghost" id="logcatPauseBtn" onclick="app.toggleLogcatPause()">Pause</button>
+                    <button class="btn btn-ghost" onclick="app.toggleLogcatWrap()" title="Toggle line wrapping">Wrap</button>
                     <button class="btn btn-primary" id="logcatStartBtn" onclick="app.startLogcat()">Start</button>
                     <button class="btn btn-danger hidden" id="logcatStopBtn" onclick="app.stopLogcat()">Stop</button>
                     <button class="btn btn-ghost" onclick="app.clearLogcat()" title="Clear Logs">Clear</button>
@@ -651,12 +785,20 @@
             warning: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>',
             info: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>'
         };
+        const text = String(message);
+        // collapse identical toasts instead of stacking them
+        for (const t of el.toastContainer.children) {
+            if (t.dataset.msg === text) { t.remove(); }
+        }
+        while (el.toastContainer.children.length >= 5) el.toastContainer.firstChild.remove();
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
-        toast.innerHTML = `<svg class="toast-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">${icons[type]}</svg><span class="toast-text"></span>`;
-        toast.querySelector('.toast-text').textContent = message;
+        toast.dataset.msg = text;
+        toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+        toast.innerHTML = `<svg class="toast-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">${icons[type] || icons.info}</svg><span class="toast-text"></span>`;
+        toast.querySelector('.toast-text').textContent = text;
         el.toastContainer.appendChild(toast);
-        setTimeout(() => toast.remove(), 4000);
+        setTimeout(() => toast.remove(), type === 'error' ? 8000 : 4000);
     }
     function showLoading(text = 'Loading...', subtext = '') {
         el.loadingText.textContent = text;
@@ -666,13 +808,111 @@
     function hideLoading() {
         el.loadingOverlay.classList.remove('visible');
     }
-    function formatSize(bytes) {
-        const num = parseInt(bytes);
-        if (isNaN(num)) return bytes;
-        if (num < 1024) return num + ' B';
-        if (num < 1048576) return (num / 1024).toFixed(1) + ' KB';
-        if (num < 1073741824) return (num / 1048576).toFixed(1) + ' MB';
-        return (num / 1073741824).toFixed(1) + ' GB';
+    const formatSize = U.formatSize;
+
+    /* ---------- tiny modal toolkit (replaces confirm()/prompt()) ---------- */
+
+    function openModal({ title, body, buttons = [], wide = false }) {
+        const prevFocus = document.activeElement;
+        const overlay = document.createElement('div');
+        overlay.className = 'ab-modal-overlay';
+        overlay.innerHTML = `<div class="ab-modal${wide ? ' wide' : ''}" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+            <div class="ab-modal-head"><strong></strong><button class="ab-modal-x" aria-label="Close">&times;</button></div>
+            <div class="ab-modal-body"></div><div class="ab-modal-foot"></div></div>`;
+        overlay.querySelector('strong').textContent = title;
+        const bodyEl = overlay.querySelector('.ab-modal-body');
+        if (typeof body === 'string') bodyEl.textContent = body; else if (body) bodyEl.appendChild(body);
+        const close = (result) => { overlay.remove(); document.removeEventListener('keydown', onKey, true); if (prevFocus && prevFocus.focus) prevFocus.focus(); return result; };
+        const onKey = (e) => {
+            if (e.key === 'Escape') { e.stopPropagation(); close(); if (onClose) onClose(); }
+            if (e.key === 'Tab') {                       // keep focus inside the dialog
+                const f = overlay.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                if (!f.length) return;
+                const first = f[0], last = f[f.length - 1];
+                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }
+        };
+        let onClose = null;
+        const foot = overlay.querySelector('.ab-modal-foot');
+        for (const b of buttons) {
+            const btn = document.createElement('button');
+            btn.className = 'btn ' + (b.danger ? 'btn-danger' : b.primary ? 'btn-primary' : 'btn-ghost');
+            btn.textContent = b.label;
+            btn.addEventListener('click', () => { const keep = b.onClick ? b.onClick() : undefined; if (keep !== false) close(); });
+            foot.appendChild(btn);
+        }
+        overlay.querySelector('.ab-modal-x').addEventListener('click', () => { close(); if (onClose) onClose(); });
+        overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) { close(); if (onClose) onClose(); } });
+        document.addEventListener('keydown', onKey, true);
+        document.body.appendChild(overlay);
+        const focusTarget = overlay.querySelector('input, textarea') || foot.querySelector('.btn-primary, .btn-danger') || foot.lastElementChild || overlay.querySelector('.ab-modal-x');
+        if (focusTarget) focusTarget.focus();
+        return { close, el: overlay, setOnClose: (fn) => { onClose = fn; } };
+    }
+
+    function askConfirm(message, { title = 'Confirm', confirmText = 'Confirm', danger = false } = {}) {
+        return new Promise((resolve) => {
+            const m = openModal({ title, body: message, buttons: [
+                { label: 'Cancel', onClick: () => resolve(false) },
+                { label: confirmText, danger, primary: !danger, onClick: () => resolve(true) }
+            ] });
+            m.setOnClose(() => resolve(false));
+        });
+    }
+
+    function askInput(label, { title = 'Input', value = '', confirmText = 'OK' } = {}) {
+        return new Promise((resolve) => {
+            const wrap = document.createElement('div');
+            const lab = document.createElement('label');
+            lab.textContent = label; lab.style.cssText = 'display:block;margin-bottom:8px;color:var(--lum-60);font-size:13px';
+            const input = document.createElement('input');
+            input.type = 'text'; input.className = 'text-input'; input.value = value; input.spellcheck = false; input.autocomplete = 'off';
+            wrap.append(lab, input);
+            const submit = () => { const v = input.value.trim(); resolve(v || null); };
+            const m = openModal({ title, body: wrap, buttons: [
+                { label: 'Cancel', onClick: () => resolve(null) },
+                { label: confirmText, primary: true, onClick: () => { if (!input.value.trim()) { input.focus(); return false; } submit(); } }
+            ] });
+            input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && input.value.trim()) { submit(); m.close(); } });
+            m.setOnClose(() => resolve(null));
+        });
+    }
+
+    function showTextModal(title, subtitle, text) {
+        const wrap = document.createElement('div');
+        if (subtitle) {
+            const sub = document.createElement('div');
+            sub.textContent = subtitle; sub.style.cssText = 'font-size:11px;color:var(--lum-40);margin-bottom:8px;word-break:break-all;font-family:monospace';
+            wrap.appendChild(sub);
+        }
+        const pre = document.createElement('pre');
+        pre.className = 'ab-pre'; pre.textContent = text || '[Empty file]';
+        wrap.appendChild(pre);
+        return openModal({ title, body: wrap, wide: true, buttons: [
+            { label: 'Copy', onClick: () => { navigator.clipboard?.writeText(text || '').then(() => showToast('Copied', 'success'), () => showToast('Copy failed', 'error')); return false; } },
+            { label: 'Close', primary: true }
+        ] });
+    }
+
+    function hexPreview(bytes, max = 2048) {
+        const lines = [];
+        for (let i = 0; i < Math.min(bytes.length, max); i += 16) {
+            const row = bytes.subarray(i, i + 16);
+            const hex = Array.from(row, b => b.toString(16).padStart(2, '0')).join(' ').padEnd(47);
+            const ascii = Array.from(row, b => (b >= 32 && b < 127 ? String.fromCharCode(b) : '.')).join('');
+            lines.push(i.toString(16).padStart(8, '0') + '  ' + hex + '  ' + ascii);
+        }
+        if (bytes.length > max) lines.push(`... ${bytes.length - max} more bytes`);
+        return lines.join('\n');
+    }
+
+    /** Show a pulled file: text if it looks like text, otherwise a hex dump. */
+    function previewBytes(name, path, bytes) {
+        const sample = bytes.subarray(0, 4096);
+        const binary = sample.some(b => b === 0);
+        if (binary) showTextModal(name + ' (binary - hex preview)', path + ' - ' + formatSize(bytes.length), hexPreview(bytes));
+        else showTextModal(name, path + ' - ' + formatSize(bytes.length), new TextDecoder().decode(bytes.subarray(0, 2 * 1024 * 1024)));
     }
     function setupLandingInteractivity() {
         const featureCards = document.querySelectorAll('.feature-card');
@@ -700,9 +940,15 @@
     }
     function navigate(section) {
         if (section !== 'overview' && !state.connected) return;
+        if (section !== state.currentSection && typeof app !== 'undefined') {
+            app.stopLogcat();                        // streams must not outlive their UI
+            app.stopLiveScreenshot();
+            if (app.shellStream) app.shellStream.stop();
+        }
         state.currentSection = section;
         document.querySelectorAll('.dock-item').forEach(item => {
             item.classList.toggle('active', item.dataset.section === section);
+            if (item.dataset.section === section) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
         });
         const dock = document.querySelector('.dock');
         const main = document.querySelector('.main');
@@ -742,33 +988,49 @@
             dropZone.addEventListener('drop', e => {
                 e.preventDefault();
                 dropZone.classList.remove('drag-over');
-                const file = e.dataTransfer.files[0];
-                if (file?.name.endsWith('.apk')) {
-                    app.installApk(file);
-                } else {
-                    showToast('Please drop a valid APK file', 'warning');
-                }
+                const files = Array.from(e.dataTransfer.files).filter(f => /\.apk$/i.test(f.name));
+                if (files.length) app.installApks(files);
+                else showToast('Please drop a valid APK file', 'warning');
             });
+            dropZone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); document.getElementById('apkInput').click(); } });
         }
         const search = document.getElementById('appSearch');
         if (search) {
-            search.addEventListener('input', () => app.filterApps(search.value));
+            search.value = state.appFilter;
+            search.addEventListener('input', U.debounce(() => app.filterApps(search.value), 120));
         }
         const toggleBtn = document.getElementById('toggleSystemApps');
         if (toggleBtn) {
+            toggleBtn.setAttribute('aria-pressed', String(state.showSystemApps));
             if (state.showSystemApps) toggleBtn.classList.add('active');
             toggleBtn.addEventListener('click', () => {
                 state.showSystemApps = !state.showSystemApps;
+                toggleBtn.setAttribute('aria-pressed', String(state.showSystemApps));
                 toggleBtn.style.background = state.showSystemApps ? 'var(--pulse-subtle)' : '';
                 toggleBtn.style.color = state.showSystemApps ? 'var(--pulse)' : '';
                 app.loadApps();
             });
         }
+        const list = document.getElementById('appList');
+        if (list) {
+            list.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-act]');
+                if (!btn) return;
+                app.appAction(btn.dataset.act, btn.dataset.pkg);
+            });
+        }
     }
+
+    const SHELL_COMMANDS = ['am', 'cat', 'cd', 'chmod', 'chown', 'clear', 'cp', 'date', 'df', 'dmesg', 'du', 'dumpsys', 'echo', 'find', 'getevent', 'getprop',
+        'grep', 'head', 'help', 'history', 'id', 'ifconfig', 'ip', 'logcat', 'ls', 'md5sum', 'mkdir', 'monkey', 'mv', 'netstat', 'pm', 'ps', 'pwd', 'rm',
+        'screencap', 'setprop', 'settings', 'sha1sum', 'sha256sum', 'sleep', 'stat', 'tail', 'top', 'touch', 'uname', 'uptime', 'wc', 'whoami'];
+    const STREAMING_RE = /^\s*(logcat|ping|getevent|dmesg\s+-w|tail\s+-[a-zA-Z]*f|top(?!\s+-n\s*1)(?!\s+-b))\b/;
+
     function setupShell() {
         const input = document.getElementById('shellInput');
         const prompt = document.getElementById('shellPrompt');
         const shellRootToggle = document.getElementById('shellRootToggle');
+        if (state.shellHistory.length === 0) state.shellHistory = store.get('shellHistory', []);
         if (shellRootToggle) {
             shellRootToggle.checked = state.shellRootMode;
         }
@@ -802,6 +1064,15 @@
                         state.shellHistoryIndex = -1;
                         input.value = '';
                     }
+                } else if (e.key === 'Tab') {
+                    e.preventDefault();
+                    app.shellComplete(input);
+                } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+                    if (app.shellStream) { e.preventDefault(); app.shellStream.stop(); }
+                    else if (!window.getSelection().toString()) { input.value = ''; }
+                } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+                    e.preventDefault();
+                    app.clearShell();
                 }
             });
             input.focus();
@@ -812,15 +1083,7 @@
         await loadSecurityApps();
     }
     async function loadSecurityApps() {
-        const selectMap = {
-            localStorage: 'storageSelect',
-            backup: 'backupSelect',
-            exported: 'exportedSelect',
-            debuggable: 'debugSelect',
-            permissions: 'permSelect',
-            appInfo: 'appInfoSelect',
-            fullScan: 'fullScanSelect'
-        };
+        const selectMap = SELECT_MAP;
         const currentSelectId = selectMap[state.currentSecurityTab];
         const currentSelect = document.getElementById(currentSelectId);
         if (currentSelect) {
@@ -843,7 +1106,7 @@
         if (!select) return;
         select.disabled = false;
         if (state.securityApps.length > 0) {
-            select.innerHTML = '<option value="">Select application...</option>' +
+            select.innerHTML = `<option value="">${selectId === 'networkSelect' ? 'All apps' : 'Select application...'}</option>` +
                 state.securityApps.map(p => `<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`).join('');
         } else {
             select.innerHTML = '<option value="">No applications found</option>';
@@ -1085,57 +1348,61 @@
         async loadOverview() {
             const statsGrid = document.getElementById('statsGrid');
             const propList = document.getElementById('propList');
+            if (!statsGrid || !propList) return;
             try {
-                const props = await adb.getDeviceProps();
-                const apps = await adb.listPackages(false);
-                let storagePercent = '-';
-                try {
-                    const storage = await adb.shell('df /data | tail -1');
-                    const parts = storage.trim().split(/\s+/);
-                    storagePercent = parts[4]?.replace('%', '') || '-';
-                } catch (e) {}
-                statsGrid.innerHTML = `
+                const [props, apps, extra] = await Promise.all([
+                    adb.getDeviceProps(),
+                    adb.listPackages(false),
+                    adb.shell('df /data | tail -1; echo @@; grep -E "MemTotal|MemAvailable" /proc/meminfo; echo @@; cut -d" " -f1 /proc/uptime').catch(() => '')
+                ]);
+                const [dfPart = '', memPart = '', upPart = ''] = extra.split('@@');
+                const dfCols = dfPart.trim().split(/\s+/);
+                const storagePercent = (dfCols[4] || '').replace('%', '') || '-';
+                const memTotal = parseInt((memPart.match(/MemTotal:\s*(\d+)/) || [])[1], 10);
+                const memAvail = parseInt((memPart.match(/MemAvailable:\s*(\d+)/) || [])[1], 10);
+                const ramPercent = memTotal ? Math.round(((memTotal - memAvail) / memTotal) * 100) : '-';
+                const uptimeSec = parseFloat(upPart.trim());
+                const uptime = isFinite(uptimeSec) ? `${Math.floor(uptimeSec / 86400)}d ${Math.floor(uptimeSec % 86400 / 3600)}h` : '-';
+                state.deviceInfo = { ...props, apps: apps.length, storagePercent, ramPercent, uptime };
+
+                const card = (label, value, sub = '') => `
                     <div class="stat-card">
-                        <div class="stat-label">Android</div>
-                        <div class="stat-value">${props.androidVersion || '-'}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">SDK Level</div>
-                        <div class="stat-value">${props.sdkVersion || '-'}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">User Apps</div>
-                        <div class="stat-value">${apps.length}</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Storage</div>
-                        <div class="stat-value">${storagePercent}%</div>
-                    </div>
-                `;
-                let manufacturer = 'Unknown';
-                let cpu = 'Unknown';
-                try {
-                    manufacturer = await adb.shell('getprop ro.product.manufacturer');
-                    cpu = await adb.shell('getprop ro.product.cpu.abi');
-                } catch (e) {}
+                        <div class="stat-label">${escapeHtml(label)}</div>
+                        <div class="stat-value">${escapeHtml(value)}</div>${sub ? `<div class="stat-sub">${escapeHtml(sub)}</div>` : ''}
+                    </div>`;
+                statsGrid.innerHTML = [
+                    card('Android', props.androidVersion || '-'),
+                    card('SDK Level', props.sdkVersion || '-'),
+                    card('User Apps', apps.length),
+                    card('Storage', storagePercent + '%'),
+                    card('RAM Used', ramPercent + '%', memTotal ? formatSize(memTotal * 1024) + ' total' : ''),
+                    card('Battery', props.batteryLevel != null ? props.batteryLevel + '%' : '-', props.charging ? 'charging' : (props.batteryTemp != null ? props.batteryTemp + ' °C' : '')),
+                    card('Uptime', uptime),
+                    card('Security Patch', props.securityPatch && props.securityPatch !== 'Unknown' ? props.securityPatch : '-')
+                ].join('');
+
+                const flag = (v, bad) => (v === bad ? v + ' ⚠' : v);
                 propList.innerHTML = [
-                    { label: 'Model', value: props.model || '-' },
-                    { label: 'Brand', value: props.brand || '-' },
-                    { label: 'Manufacturer', value: manufacturer.trim() },
-                    { label: 'Serial', value: props.serial || '-' },
-                    { label: 'CPU', value: cpu.trim() },
-                    { label: 'Build ID', value: props.buildId || '-' },
-                    { label: 'Battery', value: props.batteryLevel ? `${props.batteryLevel}%` : '-' }
-                ].map(p => `
+                    ['Model', props.model], ['Brand', props.brand], ['Manufacturer', props.manufacturer], ['Device', props.device],
+                    ['Serial', props.serial], ['CPU ABI', props.cpuAbi], ['Build ID', props.buildId], ['Build Type', flag(props.buildType, 'userdebug')],
+                    ['Fingerprint', props.fingerprint], ['Bootloader Locked', flag(props.bootloaderLocked, '0')],
+                    ['Verified Boot', props.verifiedBoot], ['Debuggable Build', flag(props.debuggable, '1')]
+                ].map(([label, value]) => `
                     <div class="prop-item">
-                        <span class="prop-label">${p.label}</span>
-                        <span class="prop-value">${p.value}</span>
+                        <span class="prop-label">${escapeHtml(label)}</span>
+                        <span class="prop-value">${escapeHtml(value || '-')}</span>
                     </div>
                 `).join('');
             } catch (e) {
                 showToast('Failed to load device info: ' + e.message, 'error');
                 console.error('Overview error:', e);
             }
+        },
+        exportDeviceInfo() {
+            if (!state.deviceInfo || !state.deviceInfo.model) { showToast('Load the overview first', 'warning'); return; }
+            const blob = new Blob([JSON.stringify(state.deviceInfo, null, 2)], { type: 'application/json' });
+            U.downloadBlob(blob, `device_${U.safeFileName(state.deviceInfo.model)}_${U.timestampForFile()}.json`);
+            showToast('Device info exported', 'success');
         },
         async loadApps() {
             const list = document.getElementById('appList');
@@ -1147,7 +1414,7 @@
                     package: pkg,
                     name: pkg.split('.').pop()
                 })).sort((a, b) => a.name.localeCompare(b.name));
-                this.renderApps(state.apps);
+                this.filterApps(state.appFilter);
             } catch (e) {
                 list.innerHTML = '<div class="empty-state"><p>Failed to load applications</p></div>';
                 showToast('Failed to load apps: ' + e.message, 'error');
@@ -1156,10 +1423,13 @@
         renderApps(apps) {
             const list = document.getElementById('appList');
             if (!list) return;
+            const count = document.getElementById('appCount');
+            if (count) count.textContent = `${apps.length} of ${state.apps.length}`;
             if (apps.length === 0) {
                 list.innerHTML = '<div class="empty-state"><p>No applications found</p></div>';
                 return;
             }
+            const icon = (d) => `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${d}"/></svg>`;
             list.innerHTML = apps.map(a => `
                 <div class="app-item">
                     <div class="app-icon">${escapeHtml(a.name.charAt(0).toUpperCase())}</div>
@@ -1168,80 +1438,125 @@
                         <div class="app-package">${escapeHtml(a.package)}</div>
                     </div>
                     <div class="app-actions">
-                        <button class="btn btn-sm btn-ghost" onclick="app.downloadApk('${escapeAttr(a.package)}')" title="Download APK">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                        </button>
+                        <button class="btn btn-sm btn-ghost" data-act="audit" data-pkg="${escapeAttr(a.package)}" title="Run security scan" aria-label="Scan ${escapeAttr(a.package)}">${icon('M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z')}</button>
+                        <button class="btn btn-sm btn-ghost" data-act="info" data-pkg="${escapeAttr(a.package)}" title="App info" aria-label="Info for ${escapeAttr(a.package)}">${icon('M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z')}</button>
+                        <button class="btn btn-sm btn-ghost" data-act="dl" data-pkg="${escapeAttr(a.package)}" title="Download APK" aria-label="Download APK of ${escapeAttr(a.package)}">${icon('M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4')}</button>
+                        <button class="btn btn-sm btn-ghost" data-act="more" data-pkg="${escapeAttr(a.package)}" title="More actions" aria-label="More actions for ${escapeAttr(a.package)}">${icon('M5 12h.01M12 12h.01M19 12h.01')}</button>
                     </div>
                 </div>
             `).join('');
         },
         filterApps(query) {
-            const filtered = state.apps.filter(a => 
-                a.name.toLowerCase().includes(query.toLowerCase()) ||
-                a.package.toLowerCase().includes(query.toLowerCase())
-            );
+            state.appFilter = query || '';
+            const q = state.appFilter.toLowerCase();
+            const filtered = state.apps.filter(a => a.name.toLowerCase().includes(q) || a.package.toLowerCase().includes(q));
             this.renderApps(filtered);
         },
-        handleApkSelect(event) {
-            const file = event.target.files[0];
-            if (file?.name.endsWith('.apk')) this.installApk(file);
+        async appAction(act, pkg) {
+            if (!U.isValidPackageName(pkg)) return;
+            switch (act) {
+                case 'dl': return this.downloadApk(pkg);
+                case 'audit': return this.openAudit(pkg, 'fullScan');
+                case 'info': return this.openAudit(pkg, 'appInfo');
+                case 'more': return this.showAppActions(pkg);
+            }
         },
-        async installApk(file) {
-            if (!file.name.endsWith('.apk')) {
-                showToast('Invalid file type', 'error');
-                return;
+        async openAudit(pkg, tab) {
+            navigate('security');
+            this.switchSecurityTab(tab);
+            await loadSecurityApps();
+            const selectIds = { fullScan: 'fullScanSelect', appInfo: 'appInfoSelect' };
+            const sel = document.getElementById(selectIds[tab]);
+            if (sel) {
+                if (![...sel.options].some(o => o.value === pkg)) sel.add(new Option(pkg, pkg));
+                sel.value = pkg;
+                if (tab === 'appInfo') this.loadAppInfo(); else this.runFullScan();
             }
-            if (file.size > 500 * 1024 * 1024) {
-                showToast('File too large (max 500MB)', 'error');
-                return;
+        },
+        showAppActions(pkg) {
+            const run = async (label, cmd, { confirmMsg, danger } = {}) => {
+                if (confirmMsg && !(await askConfirm(confirmMsg, { title: label, confirmText: label, danger }))) return;
+                showLoading(label + '...', pkg);
+                try {
+                    const out = await adb.shell(cmd, 60000);
+                    hideLoading();
+                    showToast(`${label}: ${out.split('\n').filter(Boolean).pop() || 'done'}`, /Failure|Error|Exception/i.test(out) ? 'error' : 'success');
+                    if (label === 'Uninstall') this.loadApps();
+                } catch (e) { hideLoading(); showToast(`${label} failed: ${e.message}`, 'error'); }
+            };
+            openModal({ title: pkg, body: 'Choose an action for this application.', buttons: [
+                { label: 'Launch', onClick: () => { run('Launch', `monkey -p ${pkg} -c android.intent.category.LAUNCHER 1`); } },
+                { label: 'Force stop', onClick: () => { run('Force stop', `am force-stop ${pkg}`); } },
+                { label: 'Copy name', onClick: () => { navigator.clipboard?.writeText(pkg).then(() => showToast('Copied', 'success')); } },
+                { label: 'Clear data', danger: true, onClick: () => { run('Clear data', `pm clear ${pkg}`, { confirmMsg: `Delete ALL data of ${pkg}? This cannot be undone.`, danger: true }); } },
+                { label: 'Uninstall', danger: true, onClick: () => { run('Uninstall', `pm uninstall ${pkg}`, { confirmMsg: `Uninstall ${pkg}?`, danger: true }); } }
+            ] });
+        },
+        handleApkSelect(event) {
+            const files = Array.from(event.target.files || []).filter(f => /\.apk$/i.test(f.name));
+            event.target.value = '';
+            if (files.length) this.installApks(files);
+        },
+        async installApk(file) { return this.installApks([file]); },
+        /** Install one APK, or several (split APKs) with `pm install-multiple`. */
+        async installApks(files) {
+            for (const f of files) {
+                if (f.size > 1024 * 1024 * 1024) { showToast(`${f.name} is too large (max 1GB)`, 'error'); return; }
             }
-            showLoading('Installing APK...', file.name);
+            const remotes = [];
+            showLoading('Installing APK...', files.map(f => f.name).join(', '));
             try {
-                const buffer = await file.arrayBuffer();
-                const bytes = new Uint8Array(buffer);
-                const remotePath = `/data/local/tmp/${file.name}`;
-                showLoading('Uploading...', '0%');
-                await adb.pushFile(remotePath, bytes, 0o644);
+                for (let i = 0; i < files.length; i++) {
+                    const bytes = new Uint8Array(await files[i].arrayBuffer());
+                    if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) throw new Error(`${files[i].name} is not a valid APK (bad ZIP header)`);
+                    const remote = `${tmpName()}.apk`;
+                    remotes.push(remote);
+                    await adb.pushFile(remote, bytes, 0o644, (n, total) => showLoading(`Uploading ${files[i].name}`, `${Math.round(n / total * 100)}% (${i + 1}/${files.length})`));
+                }
                 showLoading('Installing...', 'Please wait');
-                const result = await adb.shell(`pm install -r "${remotePath}"`);
-                await adb.shell(`rm "${remotePath}"`);
+                const quoted = remotes.map(shQuote).join(' ');
+                const result = await adb.shell(files.length > 1 ? `pm install-multiple -r ${quoted}` : `pm install -r ${quoted}`, 180000);
                 hideLoading();
                 if (result.includes('Success')) {
                     showToast('APK installed successfully', 'success');
                     this.loadApps();
                 } else {
-                    const error = result.match(/Failure \[(.+)\]/);
+                    const error = result.match(/Failure \[(.+?)\]/);
                     showToast('Install failed: ' + (error?.[1] || result), 'error');
                 }
             } catch (e) {
                 hideLoading();
                 showToast('Install failed: ' + e.message, 'error');
+            } finally {
+                if (remotes.length) adb.shell(`rm -f ${remotes.map(shQuote).join(' ')}`).catch(() => {});
             }
         },
         async downloadApk(pkg) {
             showLoading('Downloading APK...', '0 MB');
             try {
-                const bytes = await adb.pullApk(pkg, (downloaded) => {
-                    showLoading('Downloading APK...', formatSize(downloaded));
-                });
-                const blob = new Blob([bytes], { type: 'application/vnd.android.package-archive' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${pkg}.apk`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                hideLoading();
-                showToast(`APK downloaded (${formatSize(bytes.length)})`, 'success');
+                const paths = await adb.getApkPaths(pkg);
+                if (paths.length === 1) {
+                    const bytes = await adb.pullFile(paths[0], (n, total) => showLoading('Downloading APK...', total ? `${formatSize(n)} / ${formatSize(total)}` : formatSize(n)));
+                    U.downloadBlob(new Blob([bytes], { type: 'application/vnd.android.package-archive' }), `${pkg}.apk`);
+                    hideLoading();
+                    showToast(`APK downloaded (${formatSize(bytes.length)})`, 'success');
+                } else {
+                    const files = [];
+                    for (let i = 0; i < paths.length; i++) {
+                        showLoading('Downloading split APKs...', `${i + 1}/${paths.length}`);
+                        files.push({ name: paths[i].split('/').pop(), data: await adb.pullFile(paths[i]) });
+                    }
+                    U.downloadBlob(new Blob([U.buildZip(files)], { type: 'application/zip' }), `${pkg}_splits.zip`);
+                    hideLoading();
+                    showToast(`${paths.length} split APKs downloaded as ZIP`, 'success');
+                }
             } catch (e) {
                 hideLoading();
                 showToast('Download failed: ' + e.message, 'error');
             }
         },
         async loadFiles(path) {
-            path = ('/' + path).replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+            path = U.normalizePath(path);
             state.currentPath = path;
             const pathBar = document.getElementById('pathBar');
             const fileList = document.getElementById('fileList');
@@ -1250,111 +1565,187 @@
                 rootToggle.checked = state.rootMode;
             }
             this.setupFileDragDrop();
+            this.setupFileToolbar();
             if (pathBar) {
                 const segments = path.split('/').filter(s => s);
                 pathBar.innerHTML = `
-                    <span class="path-segment root" data-path="/">
+                    <span class="path-segment root" data-path="/" role="button" tabindex="0" aria-label="Root">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
                     </span>
                     ${segments.map((seg, i) => {
                         const segPath = '/' + segments.slice(0, i + 1).join('/');
-                        return `<span class="path-sep">/</span><span class="path-segment" data-path="${segPath}">${seg}</span>`;
+                        return `<span class="path-sep">/</span><span class="path-segment" role="button" tabindex="0" data-path="${escapeAttr(segPath)}">${escapeHtml(seg)}</span>`;
                     }).join('')}
                 `;
                 pathBar.querySelectorAll('.path-segment').forEach(seg => {
                     seg.onclick = () => this.loadFiles(seg.dataset.path);
+                    seg.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.loadFiles(seg.dataset.path); } };
                 });
             }
             if (!fileList) return;
+            const token = ++this._filesToken;
             fileList.innerHTML = '<div class="empty-state"><p>Loading...</p></div>';
             try {
-                const safePath = path.replace(/"/g, '\\"');
-                const lsCmd = `ls -la "${safePath}" 2>/dev/null`;
-                const cmd = state.rootMode ? `su -c '${lsCmd.replace(/'/g, "'\\''")}'` : lsCmd;
-                const output = await adb.shell(cmd);
-                const lines = output.split('\n').filter(l => l.trim() && !l.startsWith('total'));
-                state.files = lines.map(line => {
-                    const parts = line.trim().split(/\s+/);
-                    if (parts.length < 7) return null;
-                    const perms = parts[0];
-                    const isDir = perms.startsWith('d');
-                    const isLink = perms.startsWith('l');
-                    const size = parts[4];
-                    const name = parts.slice(7).join(' ').split(' -> ')[0]; 
-                    if (name === '.' || name === '..') return null;
-                    return { name, size, isDir: isDir || isLink, perms };
-                }).filter(Boolean).sort((a, b) => {
-                    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-                    return a.name.localeCompare(b.name);
-                });
-                if (state.files.length === 0) {
-                    fileList.innerHTML = `
-                        <div class="empty-state">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:48px;height:48px;color:var(--lum-30);margin-bottom:12px;">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                            </svg>
-                            <p>Empty directory</p>
-                        </div>`;
-                    return;
-                }
-                fileList.innerHTML = state.files.map((f, idx) => `
-                    <div class="file-item" data-index="${idx}" data-is-dir="${f.isDir}">
-                        <div class="file-info">
-                            <div class="file-icon ${f.isDir ? 'folder' : ''}">
-                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    ${f.isDir 
-                                        ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>'
-                                        : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>'}
-                                </svg>
-                            </div>
-                            <span class="file-name">${escapeHtml(f.name)}</span>
-                        </div>
-                        <span class="file-size">${f.isDir ? '-' : escapeHtml(formatSize(f.size))}</span>
-                        <span class="file-perms">${escapeHtml(f.perms.substring(0, 10))}</span>
-                        <div class="file-actions">
-                            ${!f.isDir ? `
-                                <button class="file-action-btn download-btn" data-index="${idx}" title="Download">
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                                </button>
-                            ` : `
-                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="folder-arrow">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                                </svg>
-                            `}
-                        </div>
-                    </div>
-                `).join('');
-                fileList.querySelectorAll('.file-item').forEach(item => {
-                    const idx = parseInt(item.dataset.index);
-                    const isDir = item.dataset.isDir === 'true';
-                    const file = state.files[idx];
-                    const fullPath = (path === '/' ? '' : path) + '/' + file.name;
-                    item.addEventListener('click', (e) => {
-                        if (e.target.closest('.download-btn')) return;
-                        if (isDir) {
-                            this.loadFiles(fullPath);
-                        } else {
-                            this.downloadFile(fullPath);
-                        }
-                    });
-                    const downloadBtn = item.querySelector('.download-btn');
-                    if (downloadBtn) {
-                        downloadBtn.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            this.downloadFile(fullPath);
-                        });
-                    }
-                });
+                const lsCmd = `ls -la ${shQuote(path)} 2>&1`;
+                const output = await adb.shell(state.rootMode ? U.suWrap(lsCmd) : lsCmd);
+                if (token !== this._filesToken) return;           // a newer navigation superseded this one
+                state.files = output.split('\n').map(U.parseLsLine).filter(Boolean).map(e => ({
+                    name: e.name, size: e.size, isDir: e.isDir, isLink: e.isLink, perms: e.perms, date: e.date, owner: e.owner, target: e.target
+                }));
+                if (state.files.length === 0 && /denied|not permitted/i.test(output)) throw new Error('denied');
+                if (state.files.length === 0 && /No such file|not found/i.test(output)) throw new Error('missing');
+                this.renderFileList();
             } catch (e) {
-                const errorMsg = state.rootMode ? 'Cannot access (device may not be rooted)' : 'Cannot access directory';
+                if (token !== this._filesToken) return;
+                const errorMsg = e.message === 'missing' ? 'Directory does not exist'
+                    : state.rootMode ? 'Cannot access (device may not be rooted)' : 'Cannot access directory (permission denied - try Root mode)';
                 fileList.innerHTML = `
                     <div class="empty-state">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:48px;height:48px;color:var(--alert);margin-bottom:12px;">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
                         </svg>
-                        <p>${errorMsg}</p>
+                        <p>${escapeHtml(errorMsg)}</p>
                     </div>`;
             }
+        },
+        _filesToken: 0,
+        renderFileList() {
+            const fileList = document.getElementById('fileList');
+            if (!fileList) return;
+            const q = state.fileFilter.toLowerCase();
+            const { key, dir } = state.fileSort;
+            const rows = state.files.map((f, idx) => ({ f, idx })).filter(({ f }) => !q || f.name.toLowerCase().includes(q));
+            rows.sort((a, b) => {
+                if (a.f.isDir !== b.f.isDir) return a.f.isDir ? -1 : 1;
+                const av = a.f[key], bv = b.f[key];
+                const c = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv), undefined, { numeric: true });
+                return c * dir;
+            });
+            const counter = document.getElementById('fileCount');
+            if (counter) counter.textContent = `${rows.length} item${rows.length === 1 ? '' : 's'}`;
+            if (rows.length === 0) {
+                fileList.innerHTML = `
+                    <div class="empty-state">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:48px;height:48px;color:var(--lum-30);margin-bottom:12px;">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                        </svg>
+                        <p>${q ? 'No matching files' : 'Empty directory'}</p>
+                    </div>`;
+                return;
+            }
+            const ico = (d) => `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${d}"/></svg>`;
+            fileList.innerHTML = rows.map(({ f, idx }) => `
+                <div class="file-item" data-index="${idx}" role="listitem">
+                    <div class="file-info">
+                        <div class="file-icon ${f.isDir ? 'folder' : ''}">
+                            ${f.isDir
+                                ? ico('M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z')
+                                : ico('M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z')}
+                        </div>
+                        <span class="file-name">${escapeHtml(f.name)}${f.target ? `<span class="file-link"> &rarr; ${escapeHtml(f.target)}</span>` : ''}</span>
+                    </div>
+                    <span class="file-size">${f.isDir ? '-' : escapeHtml(formatSize(f.size))}</span>
+                    <span class="file-perms" title="${escapeAttr(f.owner || '')} ${escapeAttr(f.date || '')}">${escapeHtml(f.perms.substring(0, 10))}</span>
+                    <div class="file-actions">
+                        ${!f.isDir ? `<button class="file-action-btn" data-act="view" title="Preview" aria-label="Preview ${escapeAttr(f.name)}">${ico('M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z')}</button>
+                        <button class="file-action-btn" data-act="download" title="Download" aria-label="Download ${escapeAttr(f.name)}">${ico('M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4')}</button>` : ''}
+                        <button class="file-action-btn" data-act="rename" title="Rename" aria-label="Rename ${escapeAttr(f.name)}">${ico('M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z')}</button>
+                        <button class="file-action-btn danger" data-act="delete" title="Delete" aria-label="Delete ${escapeAttr(f.name)}">${ico('M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16')}</button>
+                    </div>
+                </div>
+            `).join('');
+            fileList.onclick = (e) => this.onFileListClick(e);
+        },
+        async onFileListClick(e) {
+            const item = e.target.closest('.file-item');
+            if (!item) return;
+            const file = state.files[parseInt(item.dataset.index, 10)];
+            if (!file) return;
+            const fullPath = U.joinPath(state.currentPath, file.name);
+            const act = e.target.closest('[data-act]')?.dataset.act;
+            if (act === 'view') return this.viewFile(fullPath);
+            if (act === 'download') return this.downloadFile(fullPath);
+            if (act === 'rename') return this.renameFile(fullPath, file);
+            if (act === 'delete') return this.deleteFile(fullPath, file);
+            let isDir = file.isDir;
+            if (file.isLink) {
+                try {
+                    const probe = `[ -d ${shQuote(fullPath)} ] && echo d || echo f`;
+                    isDir = (await adb.shell(state.rootMode ? U.suWrap(probe) : probe)).trim() === 'd';
+                } catch (err) { isDir = false; }
+            }
+            if (isDir) this.loadFiles(fullPath); else this.downloadFile(fullPath);
+        },
+        setupFileToolbar() {
+            const filter = document.getElementById('fileFilter');
+            if (filter && !filter.dataset.init) {
+                filter.dataset.init = '1';
+                filter.value = state.fileFilter;
+                filter.addEventListener('input', U.debounce(() => { state.fileFilter = filter.value; this.renderFileList(); }, 100));
+            }
+            const sort = document.getElementById('fileSort');
+            if (sort && !sort.dataset.init) {
+                sort.dataset.init = '1';
+                sort.value = state.fileSort.key + ':' + state.fileSort.dir;
+                sort.addEventListener('change', () => {
+                    const [k, d] = sort.value.split(':');
+                    state.fileSort = { key: k, dir: parseInt(d, 10) };
+                    this.renderFileList();
+                });
+            }
+            const marks = document.getElementById('fileBookmarks');
+            if (marks && !marks.dataset.init) {
+                marks.dataset.init = '1';
+                marks.addEventListener('click', (e) => {
+                    const b = e.target.closest('[data-path]');
+                    if (b) this.loadFiles(b.dataset.path);
+                });
+            }
+        },
+        async asShell(cmd) {
+            const out = await adb.shell(state.rootMode ? U.suWrap(cmd) + ' 2>&1' : cmd + ' 2>&1');
+            if (/denied|not permitted|Read-only|No such file|cannot/i.test(out)) throw new Error(out.split('\n')[0]);
+            return out;
+        },
+        async makeDirectory() {
+            const name = await askInput('Folder name', { title: 'New folder', confirmText: 'Create' });
+            if (!name) return;
+            if (/[\/\x00]/.test(name)) { showToast('Folder name cannot contain "/"', 'error'); return; }
+            try {
+                await this.asShell(`mkdir -p ${shQuote(U.joinPath(state.currentPath, name))}`);
+                showToast('Folder created', 'success');
+                this.loadFiles(state.currentPath);
+            } catch (e) { showToast('Create failed: ' + e.message, 'error'); }
+        },
+        async renameFile(fullPath, file) {
+            const name = await askInput('New name', { title: 'Rename', value: file.name, confirmText: 'Rename' });
+            if (!name || name === file.name) return;
+            if (/[\/\x00]/.test(name)) { showToast('Name cannot contain "/"', 'error'); return; }
+            try {
+                await this.asShell(`mv ${shQuote(fullPath)} ${shQuote(U.joinPath(state.currentPath, name))}`);
+                showToast('Renamed', 'success');
+                this.loadFiles(state.currentPath);
+            } catch (e) { showToast('Rename failed: ' + e.message, 'error'); }
+        },
+        async deleteFile(fullPath, file) {
+            const ok = await askConfirm(`Delete ${file.isDir ? 'folder' : 'file'} "${file.name}"${file.isDir ? ' and everything inside it' : ''}? This cannot be undone.`, { title: 'Delete', confirmText: 'Delete', danger: true });
+            if (!ok) return;
+            try {
+                await this.asShell(`rm -${file.isDir ? 'rf' : 'f'} ${shQuote(fullPath)}`);
+                showToast('Deleted', 'success');
+                this.loadFiles(state.currentPath);
+            } catch (e) { showToast('Delete failed: ' + e.message, 'error'); }
+        },
+        async viewFile(path) {
+            const name = path.split('/').pop();
+            showLoading('Loading file...', name);
+            try {
+                const size = state.rootMode ? 0 : (await adb.statFile(path).catch(() => ({ size: 0 }))).size;
+                if (size > 5 * 1024 * 1024) { hideLoading(); showToast('File is larger than 5 MB - download it instead', 'warning'); return; }
+                const bytes = await readDeviceFile(path);
+                hideLoading();
+                previewBytes(name, path, bytes);
+            } catch (e) { hideLoading(); showToast('Cannot read file: ' + e.message, 'error'); }
         },
         setupFileDragDrop() {
             const dropZone = document.getElementById('fileDropZone');
@@ -1383,8 +1774,21 @@
                 }
             });
         },
-        toggleRootMode() {
-            state.rootMode = !state.rootMode;
+        async toggleRootMode() {
+            const wasOn = state.rootMode;
+            const toggle = document.getElementById('rootToggle');
+            if (!wasOn) {
+                showLoading('Checking root access...', 'Grant the superuser prompt on the device if it appears');
+                let ok = false;
+                try { ok = /uid=0/.test(await adb.shell(U.suWrap('id') + ' 2>&1', 15000)); } catch (e) { ok = false; }
+                hideLoading();
+                if (!ok) {
+                    showToast('Root access is not available on this device', 'error');
+                    if (toggle) toggle.checked = false;
+                    return;
+                }
+            }
+            state.rootMode = !wasOn;
             showToast(state.rootMode ? 'Root mode enabled' : 'Root mode disabled', 'info');
             this.loadFiles(state.currentPath);
         },
@@ -1392,7 +1796,7 @@
             const parts = state.currentPath.split('/').filter(s => s);
             if (parts.length > 0) {
                 parts.pop();
-                this.loadFiles('/' + parts.join('/') || '/');
+                this.loadFiles('/' + parts.join('/'));
             }
         },
         refreshFiles() {
@@ -1400,37 +1804,18 @@
         },
         async downloadFile(path) {
             const fileName = path.split('/').pop();
-            showLoading('Downloading...', '0 MB');
+            showLoading('Downloading...', fileName);
             try {
-                let bytes;
-                if (state.rootMode) {
-                    showLoading('Downloading...', fileName + ' (root mode)');
-                    const safePath = path.replace(/"/g, '\\"');
-                    const cmd = `su -c "base64 \\"${safePath}\\""`;
-                    const base64Output = await adb.shell(cmd);
-                    if (!base64Output || base64Output.includes('Permission denied') || base64Output.includes('No such file')) {
-                        throw new Error('Cannot read file (permission denied or not found)');
+                if (!state.rootMode) {
+                    const st = await adb.statFile(path).catch(() => null);
+                    if (st && st.size > 512 * 1024 * 1024) {
+                        hideLoading();
+                        if (!(await askConfirm(`${fileName} is ${formatSize(st.size)}. It will be held in browser memory - continue?`, { title: 'Large file', confirmText: 'Download' }))) return;
+                        showLoading('Downloading...', fileName);
                     }
-                    const cleanBase64 = base64Output.trim().replace(/\s/g, '');
-                    const binaryString = atob(cleanBase64);
-                    bytes = new Uint8Array(binaryString.length);
-                    for (let i = 0; i < binaryString.length; i++) {
-                        bytes[i] = binaryString.charCodeAt(i);
-                    }
-                } else {
-                    bytes = await adb.pullFile(path, (downloaded) => {
-                        showLoading('Downloading...', formatSize(downloaded));
-                    });
                 }
-                const blob = new Blob([bytes]);
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+                const bytes = await readDeviceFile(path, (n, total) => showLoading('Downloading...', total ? `${fileName} - ${formatSize(n)} / ${formatSize(total)}` : `${fileName} - ${formatSize(n)}`));
+                U.downloadBlob(new Blob([bytes]), fileName);
                 hideLoading();
                 showToast(`Downloaded: ${fileName} (${formatSize(bytes.length)})`, 'success');
             } catch (e) {
@@ -1441,185 +1826,222 @@
         handleFileUpload(event) {
             const files = event.target.files;
             if (!files || files.length === 0) return;
-            Array.from(files).forEach(file => {
-                this.uploadFile(file);
-            });
+            this.uploadFiles(Array.from(files));
             event.target.value = '';
         },
-        async uploadFile(file) {
-            const destPath = (state.currentPath === '/' ? '' : state.currentPath) + '/' + file.name;
+        async uploadFiles(files) {
+            for (const f of files) await this.uploadFile(f, true);
+            this.loadFiles(state.currentPath);
+        },
+        async uploadFile(file, skipReload = false) {
+            const destPath = U.joinPath(state.currentPath, file.name);
             showLoading('Uploading...', file.name);
             try {
-                const buffer = await file.arrayBuffer();
-                const bytes = new Uint8Array(buffer);
-                if (state.rootMode) {
-                    let binary = '';
-                    for (let i = 0; i < bytes.length; i++) {
-                        binary += String.fromCharCode(bytes[i]);
-                    }
-                    const base64Data = btoa(binary);
-                    const safeDestPath = destPath.replace(/"/g, '\\"');
-                    await adb.shell(`su -c "echo -n '' > \\"${safeDestPath}\\""`);
-                    const chunkSize = 32000; 
-                    for (let i = 0; i < base64Data.length; i += chunkSize) {
-                        const chunk = base64Data.slice(i, i + chunkSize);
-                        await adb.shell(`su -c "echo -n '${chunk}' | base64 -d >> \\"${safeDestPath}\\""`);
-                    }
-                    hideLoading();
-                    showToast(`Uploaded: ${file.name}`, 'success');
-                } else {
-                    await adb.pushFile(destPath, bytes);
-                    hideLoading();
-                    showToast(`Uploaded: ${file.name}`, 'success');
-                }
-                this.loadFiles(state.currentPath);
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                const progress = (n, total) => showLoading('Uploading...', `${file.name} - ${Math.round(n / total * 100)}%`);
+                if (state.rootMode) await pushAsRoot(destPath, bytes, progress);
+                else await adb.pushFile(destPath, bytes, 0o644, progress);
+                hideLoading();
+                showToast(`Uploaded: ${file.name}`, 'success');
+                if (!skipReload) this.loadFiles(state.currentPath);
             } catch (e) {
                 hideLoading();
                 let errMsg = 'Upload failed: ' + e.message;
-                if (e.message.includes('not permitted') || e.message.includes('Permission denied') || e.message.includes('Read-only')) {
+                if (/not permitted|Permission denied|Read-only/i.test(e.message)) {
                     errMsg += '. Try enabling Root Mode toggle above to write to system directories.';
                 }
                 showToast(errMsg, 'error');
             }
         },
-        async captureScreenshot() {
-            showLoading('Capturing...');
+        async captureScreenshot(silent = false) {
+            if (!silent) showLoading('Capturing...');
             try {
                 const blob = await adb.takeScreenshot();
                 state.screenshotBlob = blob;
-                const url = URL.createObjectURL(blob);
+                if (state.screenshotUrl) URL.revokeObjectURL(state.screenshotUrl);
+                state.screenshotUrl = URL.createObjectURL(blob);
                 const area = document.getElementById('screenshotArea');
-                area.innerHTML = `<img class="screenshot-preview" src="${url}" alt="Screenshot">`;
-                document.getElementById('saveScreenshotBtn').disabled = false;
-                hideLoading();
-                showToast('Screenshot captured', 'success');
+                if (!area) return;
+                area.innerHTML = `<img class="screenshot-preview" alt="Device screenshot">`;
+                area.querySelector('img').src = state.screenshotUrl;
+                for (const id of ['saveScreenshotBtn', 'copyScreenshotBtn']) {
+                    const b = document.getElementById(id); if (b) b.disabled = false;
+                }
+                if (!silent) { hideLoading(); showToast('Screenshot captured', 'success'); }
             } catch (e) {
                 hideLoading();
+                this.stopLiveScreenshot();
                 showToast('Capture failed: ' + e.message, 'error');
             }
         },
+        liveTimer: null,
+        toggleLiveScreenshot() {
+            if (this.liveTimer) { this.stopLiveScreenshot(); return; }
+            const btn = document.getElementById('liveScreenshotBtn');
+            if (btn) { btn.classList.add('active'); btn.setAttribute('aria-pressed', 'true'); }
+            let busy = false;
+            const tick = async () => {
+                if (busy || !document.getElementById('screenshotArea')) { if (!document.getElementById('screenshotArea')) this.stopLiveScreenshot(); return; }
+                busy = true;
+                try { await this.captureScreenshot(true); } finally { busy = false; }
+            };
+            tick();
+            this.liveTimer = setInterval(tick, 1500);
+        },
+        stopLiveScreenshot() {
+            if (this.liveTimer) { clearInterval(this.liveTimer); this.liveTimer = null; }
+            const btn = document.getElementById('liveScreenshotBtn');
+            if (btn) { btn.classList.remove('active'); btn.setAttribute('aria-pressed', 'false'); }
+        },
+        async copyScreenshot() {
+            if (!state.screenshotBlob) return;
+            try {
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': state.screenshotBlob })]);
+                showToast('Screenshot copied to clipboard', 'success');
+            } catch (e) { showToast('Clipboard copy is not available in this browser', 'error'); }
+        },
         saveScreenshot() {
             if (state.screenshotBlob) {
-                const url = URL.createObjectURL(state.screenshotBlob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `screenshot_${Date.now()}.png`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+                U.downloadBlob(state.screenshotBlob, `screenshot_${U.safeFileName(state.deviceInfo.model || 'device')}_${U.timestampForFile()}.png`);
                 showToast('Screenshot saved', 'success');
             }
         },
-        async executeCommand(cmd) {
+        shellStream: null,
+        shellLines: 0,
+        appendShell(kind, text) {
             const output = document.getElementById('shellOutput');
+            if (!output) return null;
+            const div = document.createElement('div');
+            div.className = kind;
+            div.textContent = text;
+            output.appendChild(div);
+            // keep the DOM bounded
+            if (++this.shellLines > 2000) { output.firstChild?.remove(); this.shellLines--; }
+            output.scrollTop = output.scrollHeight;
+            return div;
+        },
+        async shellComplete(input) {
+            const value = input.value;
+            const m = /(^|\s)([^\s]*)$/.exec(value);
+            const word = m ? m[2] : '';
+            const isFirst = !/\s/.test(value.trimStart());
+            let matches = [];
+            if (isFirst) {
+                matches = SHELL_COMMANDS.filter(c => c.startsWith(word));
+            } else if (/^[\w./@+-]*$/.test(word)) {
+                const dir = word.includes('/') ? word.slice(0, word.lastIndexOf('/') + 1) : '';
+                const base = word.slice(dir.length);
+                const cwd = dir.startsWith('/') ? '' : (state.shellCwd ? `cd ${shQuote(state.shellCwd)} && ` : '');
+                const target = dir ? shQuote(dir) : '.';
+                try {
+                    const out = await adb.shell(`${cwd}ls -1p ${target} 2>/dev/null | head -200`, 5000);
+                    matches = out.split('\n').filter(n => n && n.startsWith(base)).map(n => dir + n);
+                } catch (e) { matches = []; }
+            }
+            if (matches.length === 1) {
+                input.value = value.slice(0, value.length - word.length) + matches[0] + (matches[0].endsWith('/') ? '' : ' ');
+            } else if (matches.length > 1) {
+                let common = matches[0];
+                for (const mm of matches) { while (!mm.startsWith(common)) common = common.slice(0, -1); }
+                if (common.length > word.length) input.value = value.slice(0, value.length - word.length) + common;
+                else this.appendShell('shell-result', matches.slice(0, 60).join('  '));
+            }
+        },
+        async executeCommand(cmd) {
             const input = document.getElementById('shellInput');
             state.shellHistory.push(cmd);
+            if (state.shellHistory.length > 200) state.shellHistory.shift();
+            store.set('shellHistory', state.shellHistory.slice(-50));
             state.shellHistoryIndex = -1;
             const promptChar = state.shellRootMode ? '#' : '$';
-            output.insertAdjacentHTML('beforeend', `<div class="shell-line"><span class="shell-prompt">${promptChar} </span>${escapeHtml(cmd)}</div>`);
-            if (cmd === 'clear') {
-                output.innerHTML = '';
-                if (input) input.focus();
-                return;
+            const line = this.appendShell('shell-line', '');
+            if (line) {
+                const pr = document.createElement('span');
+                pr.className = 'shell-prompt'; pr.textContent = promptChar + ' ';
+                line.append(pr, document.createTextNode(cmd));
             }
+            const done = () => { const o = document.getElementById('shellOutput'); if (o) o.scrollTop = o.scrollHeight; if (input) input.focus(); };
+            if (cmd === 'clear') { this.clearShell(); done(); return; }
+            if (cmd === 'history') { this.appendShell('shell-result', state.shellHistory.map((h, i) => `${String(i + 1).padStart(4)}  ${h}`).join('\n')); done(); return; }
             if (cmd === 'help') {
-                const rootNote = state.shellRootMode ? ' (root mode active — commands run via su)' : '';
-                output.insertAdjacentHTML('beforeend', `<div class="shell-result">Commands: ls, cd, pwd, cat, ps, df, pm, dumpsys, getprop, logcat, clear${rootNote}</div>`);
-                output.scrollTop = output.scrollHeight;
-                if (input) input.focus();
-                return;
+                const rootNote = state.shellRootMode ? ' (root mode active - commands run via su)' : '';
+                this.appendShell('shell-result', `Built-ins: clear, history, help, cd\nTab completes commands and paths; Up/Down browse history; Ctrl+C stops streaming commands (logcat, ping, getevent...); Ctrl+L clears.\nAny other command runs on the device shell${rootNote}.`);
+                done(); return;
             }
             const isAlreadySu = /^\s*su\b/.test(cmd);
             const useRoot = state.shellRootMode && !isAlreadySu;
-            const wrapRoot = (shellCmd) => {
-                if (!useRoot) return shellCmd;
-                const escaped = shellCmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
-                return `su -c "${escaped}"`;
-            };
+            const wrapRoot = (shellCmd) => (useRoot ? U.suWrap(shellCmd) : shellCmd);
+            const cwdPrefix = state.shellCwd ? `cd ${shQuote(state.shellCwd)} && ` : '';
             try {
-                const cdMatch = cmd.match(/^\s*cd\s+(.*)/);
+                const cdMatch = cmd.match(/^\s*cd(?:\s+(.*))?$/);
                 if (cdMatch) {
-                    const target = cdMatch[1].trim().replace(/^["']|["']$/g, '');
+                    const target = (cdMatch[1] || '').trim().replace(/^(["'])(.*)\1$/, '$2');
                     let resolveCmd;
-                    if (target === '~' || target === '') {
-                        resolveCmd = useRoot ? 'echo /' : 'echo /storage/emulated/0';
-                    } else if (target.startsWith('/')) {
-                        resolveCmd = `cd "${target}" 2>&1 && pwd`;
-                    } else if (state.shellCwd) {
-                        resolveCmd = `cd "${state.shellCwd}" && cd "${target}" 2>&1 && pwd`;
-                    } else {
-                        resolveCmd = `cd "${target}" 2>&1 && pwd`;
-                    }
-                    const result = await adb.shell(wrapRoot(resolveCmd));
-                    const trimmed = result.trim();
+                    if (target === '~' || target === '') resolveCmd = useRoot ? 'echo /' : 'echo /storage/emulated/0';
+                    else if (target.startsWith('/')) resolveCmd = `cd ${shQuote(target)} 2>&1 && pwd`;
+                    else resolveCmd = `${cwdPrefix}cd ${shQuote(target)} 2>&1 && pwd`;
+                    const trimmed = (await adb.shell(wrapRoot(resolveCmd))).trim();
                     if (trimmed.startsWith('/')) {
-                        state.shellCwd = trimmed;
-                        output.insertAdjacentHTML('beforeend', `<div class="shell-result">${escapeHtml(state.shellCwd)}</div>`);
+                        state.shellCwd = trimmed.split('\n').pop();
+                        this.appendShell('shell-result', state.shellCwd);
                     } else {
-                        output.insertAdjacentHTML('beforeend', `<div class="shell-error">${escapeHtml(trimmed || 'No such directory')}</div>`);
+                        this.appendShell('shell-error', trimmed || 'No such directory');
                     }
+                } else if (STREAMING_RE.test(cmd)) {
+                    const base = isAlreadySu ? cmd : wrapRoot(cwdPrefix + cmd);
+                    const target = this.appendShell('shell-result', '');
+                    let buffered = '';
+                    this.shellStream = await adb.streamShell(base, (text) => {
+                        buffered += text;
+                        if (buffered.length > 200000) buffered = buffered.slice(-100000);
+                        if (target) { target.textContent = buffered; const o = document.getElementById('shellOutput'); if (o) o.scrollTop = o.scrollHeight; }
+                    });
+                    this.appendShell('shell-line', '(streaming - press Ctrl+C to stop)').style.color = 'var(--lum-50)';
+                    try { await this.shellStream.done; } finally { this.shellStream = null; }
                 } else {
-                    let fullCmd;
-                    if (isAlreadySu) {
-                        fullCmd = state.shellCwd ? `cd "${state.shellCwd}" 2>/dev/null; ${cmd}` : cmd;
-                    } else {
-                        const baseCmd = state.shellCwd ? `cd "${state.shellCwd}" && ${cmd}` : cmd;
-                        fullCmd = wrapRoot(baseCmd);
-                    }
-                    const result = await adb.shell(fullCmd);
-                    if (result) {
-                        output.insertAdjacentHTML('beforeend', `<div class="shell-result">${escapeHtml(result)}</div>`);
-                    }
+                    const full = isAlreadySu ? (state.shellCwd ? `cd ${shQuote(state.shellCwd)} 2>/dev/null; ${cmd}` : cmd) : wrapRoot(cwdPrefix + cmd);
+                    const result = await adb.shell(full, 120000);
+                    if (result) this.appendShell('shell-result', result);
                 }
             } catch (e) {
-                output.insertAdjacentHTML('beforeend', `<div class="shell-error">Error: ${escapeHtml(e.message)}</div>`);
+                this.appendShell('shell-error', 'Error: ' + e.message);
             }
-            output.scrollTop = output.scrollHeight;
-            if (input) input.focus();
+            done();
         },
         toggleShellRoot() {
             state.shellRootMode = !state.shellRootMode;
             const prompt = document.getElementById('shellPrompt');
-            const output = document.getElementById('shellOutput');
             const ch = state.shellRootMode ? '#' : '$';
             if (prompt) {
                 prompt.textContent = state.shellCwd ? state.shellCwd + ' ' + ch : ch;
             }
-            if (state.shellRootMode) {
-                if (output) {
-                    output.insertAdjacentHTML('beforeend', `<div class="shell-line" style="color:var(--warning)">Root mode enabled — commands will run via su</div>`);
-                    output.scrollTop = output.scrollHeight;
-                }
-            } else {
-                if (output) {
-                    output.insertAdjacentHTML('beforeend', `<div class="shell-line" style="color:var(--lum-50)">Root mode disabled</div>`);
-                    output.scrollTop = output.scrollHeight;
-                }
-            }
+            const note = this.appendShell('shell-line', state.shellRootMode ? 'Root mode enabled - commands will run via su' : 'Root mode disabled');
+            if (note) note.style.color = state.shellRootMode ? 'var(--warning)' : 'var(--lum-50)';
             showToast(state.shellRootMode ? 'Shell root mode enabled' : 'Shell root mode disabled', 'info');
         },
         clearShell() {
             const output = document.getElementById('shellOutput');
             if (output) output.innerHTML = '';
+            this.shellLines = 0;
+        },
+        downloadShellTranscript() {
+            const output = document.getElementById('shellOutput');
+            if (!output || !output.textContent.trim()) { showToast('Nothing to save', 'warning'); return; }
+            const text = Array.from(output.children).map(c => c.textContent).join('\n');
+            U.downloadBlob(new Blob([text], { type: 'text/plain' }), `shell_${U.timestampForFile()}.txt`);
         },
         switchSecurityTab(tab) {
+            if (tab !== 'logcat') this.stopLogcat();
             state.currentSecurityTab = tab;
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.tab === tab);
+                btn.setAttribute('role', 'tab');
+                btn.setAttribute('aria-selected', String(btn.dataset.tab === tab));
             });
             const content = document.getElementById('securityTabContent');
             if (content) {
                 content.innerHTML = securityTabs[tab] || '';
-                const selectMap = {
-                    localStorage: 'storageSelect',
-                    backup: 'backupSelect',
-                    exported: 'exportedSelect',
-                    debuggable: 'debugSelect',
-                    permissions: 'permSelect',
-                    appInfo: 'appInfoSelect',
-                    fullScan: 'fullScanSelect'
-                };
+                const selectMap = SELECT_MAP;
                 const selectId = selectMap[tab];
                 if (selectId) {
                     const select = document.getElementById(selectId);
@@ -1634,53 +2056,77 @@
                 }
             }
         },
-        logcatInterval: null,
-        logcatRunning: false,
+        logcatStream: null,
+        logcatPaused: false,
+        logcatPending: [],
+        logcatTimer: null,
+        get logcatRunning() { return !!this.logcatStream; },
         async startLogcat() {
-            const filter = document.getElementById('logcatFilter')?.value.trim() || '';
+            if (this.logcatStream) return;
+            const raw = document.getElementById('logcatFilter')?.value.trim() || '';
+            const minLevel = document.getElementById('logcatLevel')?.value || 'V';
             const output = document.getElementById('logcatOutput');
             const startBtn = document.getElementById('logcatStartBtn');
             const stopBtn = document.getElementById('logcatStopBtn');
             const status = document.getElementById('logcatStatus');
             if (!output) return;
+            // filter: plain text (case-insensitive) or /regex/
+            let matcher = null;
+            const rx = raw.match(/^\/(.+)\/([a-z]*)$/);
+            try {
+                if (rx) { const re = new RegExp(rx[1], rx[2].includes('i') ? rx[2] : rx[2] + 'i'); matcher = (l) => re.test(l); }
+                else if (raw) { const low = raw.toLowerCase(); matcher = (l) => l.toLowerCase().includes(low); }
+            } catch (e) { showToast('Invalid regular expression', 'error'); return; }
+            const order = 'VDIWEF';
+            this.logcatPaused = false;
+            this.logcatPending = [];
             output.innerHTML = '';
             startBtn.classList.add('hidden');
             stopBtn.classList.remove('hidden');
             status.textContent = 'Running';
             status.className = 'badge success';
-            this.logcatRunning = true;
-            await adb.shell('logcat -c');
-            const safeFilter = filter.replace(/[`$\\!"'|;&<>(){}[\]]/g, '');
-            const grepCmd = safeFilter ? ` | grep -i "${safeFilter}"` : '';
-            const poll = async () => {
-                if (!this.logcatRunning) return;
-                try {
-                    const logs = await adb.shell(`logcat -d -v brief${grepCmd} | tail -50`);
-                    if (logs.trim() && this.logcatRunning) {
-                        const lines = logs.trim().split('\n');
-                        for (const line of lines) {
-                            const div = document.createElement('div');
-                            div.className = 'logcat-line ' + this.getLogLevel(line);
-                            div.textContent = line;
-                            output.appendChild(div);
-                        }
-                        output.scrollTop = output.scrollHeight;
-                        await adb.shell('logcat -c');
-                    }
-                } catch (e) {
+            let partial = '';
+            const flush = () => {
+                if (this.logcatPaused || !this.logcatPending.length) return;
+                const near = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
+                const frag = document.createDocumentFragment();
+                for (const line of this.logcatPending.splice(0)) {
+                    const div = document.createElement('div');
+                    const lvl = this.getLogLevel(line);
+                    div.className = 'logcat-line ' + lvl;
+                    div.textContent = line;
+                    frag.appendChild(div);
                 }
-                if (this.logcatRunning) {
-                    this.logcatInterval = setTimeout(poll, 1000);
-                }
+                output.appendChild(frag);
+                while (output.childElementCount > 5000) output.firstChild.remove();
+                if (near) output.scrollTop = output.scrollHeight;
             };
-            this.logcatInterval = setTimeout(poll, 500);
+            this.logcatTimer = setInterval(flush, 120);
+            try {
+                this.logcatStream = await adb.streamShell('logcat -v threadtime -T 100', (text) => {
+                    partial += text;
+                    const lines = partial.split('\n');
+                    partial = lines.pop();
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        const lvl = this.getLogLevel(line);
+                        if (lvl && minLevel !== 'V' && order.indexOf(({ verbose: 'V', debug: 'D', info: 'I', warn: 'W', error: 'E', fatal: 'F' })[lvl]) < order.indexOf(minLevel)) continue;
+                        if (matcher && !matcher(line)) continue;
+                        this.logcatPending.push(line);
+                        if (this.logcatPending.length > 20000) this.logcatPending.splice(0, 10000);
+                    }
+                });
+                this.logcatStream.done.catch(() => {}).finally(() => this.stopLogcat());
+            } catch (e) {
+                this.stopLogcat();
+                showToast('Logcat failed: ' + e.message, 'error');
+            }
         },
         stopLogcat() {
-            this.logcatRunning = false;
-            if (this.logcatInterval) {
-                clearTimeout(this.logcatInterval);
-                this.logcatInterval = null;
-            }
+            const stream = this.logcatStream;
+            this.logcatStream = null;
+            if (stream) stream.stop().catch(() => {});
+            if (this.logcatTimer) { clearInterval(this.logcatTimer); this.logcatTimer = null; }
             const startBtn = document.getElementById('logcatStartBtn');
             const stopBtn = document.getElementById('logcatStopBtn');
             const status = document.getElementById('logcatStatus');
@@ -1691,9 +2137,21 @@
                 status.className = 'badge';
             }
         },
+        toggleLogcatPause() {
+            this.logcatPaused = !this.logcatPaused;
+            const btn = document.getElementById('logcatPauseBtn');
+            if (btn) btn.textContent = this.logcatPaused ? 'Resume' : 'Pause';
+            const status = document.getElementById('logcatStatus');
+            if (status && this.logcatRunning) { status.textContent = this.logcatPaused ? 'Paused' : 'Running'; }
+        },
+        toggleLogcatWrap() {
+            const out = document.getElementById('logcatOutput');
+            if (out) out.classList.toggle('nowrap');
+        },
         clearLogcat() {
             const output = document.getElementById('logcatOutput');
             if (output) output.innerHTML = '';
+            this.logcatPending = [];
         },
         downloadLogcat() {
             const output = document.getElementById('logcatOutput');
@@ -1702,24 +2160,13 @@
                 return;
             }
             const lines = Array.from(output.querySelectorAll('.logcat-line')).map(el => el.textContent);
-            const content = lines.join('\n');
-            const blob = new Blob([content], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `logcat_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.txt`;
-            a.click();
-            URL.revokeObjectURL(url);
+            U.downloadBlob(new Blob([lines.join('\n')], { type: 'text/plain' }), `logcat_${U.timestampForFile()}.txt`);
             showToast('Logs downloaded', 'success');
         },
         getLogLevel(line) {
-            if (line.includes(' V/') || line.startsWith('V/')) return 'verbose';
-            if (line.includes(' D/') || line.startsWith('D/')) return 'debug';
-            if (line.includes(' I/') || line.startsWith('I/')) return 'info';
-            if (line.includes(' W/') || line.startsWith('W/')) return 'warn';
-            if (line.includes(' E/') || line.startsWith('E/')) return 'error';
-            if (line.includes(' F/') || line.startsWith('F/')) return 'fatal';
-            return '';
+            const m = /^\d\d-\d\d\s+\d\d:\d\d:\d\d\.\d+\s+\d+\s+\d+\s+([VDIWEF])\s/.exec(line) || /^([VDIWEF])\//.exec(line);
+            if (!m) return '';
+            return ({ V: 'verbose', D: 'debug', I: 'info', W: 'warn', E: 'error', F: 'fatal' })[m[1]];
         },
         async analyzeStorage() {
             const pkg = document.getElementById('storageSelect')?.value;
@@ -1766,17 +2213,24 @@
                 results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
             }
         },
+        renderCheck(results, result, labels) {
+            const badge = result.status === 'pass' ? 'pass' : result.status === 'fail' ? 'fail' : result.status === 'error' ? 'fail' : 'warning';
+            const label = result.status === 'error' ? '! Error' : (labels[result.status] || labels.review);
+            let html = `<div class="result-box"><div class="result-header"><span class="badge ${badge}">${escapeHtml(label)}</span></div>`;
+            html += `<p style="margin-top:12px;color:var(--lum-70)">${escapeHtml(result.error || result.description)}</p>`;
+            for (const f of result.findings || []) {
+                html += `<div style="padding:4px 0;font-size:12px;color:var(--lum-60)">&bull; ${escapeHtml(f.note || f.type)}${f.recommendation ? `<br><em style="color:var(--lum-50)">${escapeHtml(f.recommendation)}</em>` : ''}</div>`;
+            }
+            results.innerHTML = html + '</div>';
+        },
         async checkBackup() {
             const pkg = document.getElementById('backupSelect')?.value;
             if (!pkg) { showToast('Select an application', 'warning'); return; }
             const results = document.getElementById('backupResults');
             results.innerHTML = '<div class="empty-state"><p>Checking...</p></div>';
             try {
-                const auditor = new SecurityAuditor(adb);
-                const result = await auditor.testBackupEnabled(pkg);
-                const badge = result.status === 'pass' ? 'pass' : result.status === 'fail' ? 'fail' : 'warning';
-                const label = result.status === 'pass' ? '✓ Secure' : result.status === 'fail' ? '✗ Vulnerable' : '⚠ Review';
-                results.innerHTML = `<div class="result-box"><div class="result-header"><span class="badge ${badge}">${label}</span></div><p style="margin-top:12px;color:var(--lum-70)">${result.description}</p></div>`;
+                const result = await new SecurityAuditor(adb).testBackupEnabled(pkg);
+                this.renderCheck(results, result, { pass: '✓ Secure', fail: '✗ Vulnerable', review: '⚠ Review' });
             } catch (e) {
                 results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
             }
@@ -1787,24 +2241,18 @@
             const results = document.getElementById('exportedResults');
             results.innerHTML = '<div class="empty-state"><p>Analyzing...</p></div>';
             try {
-                const auditor = new SecurityAuditor(adb);
-                const result = await auditor.testExportedComponents(pkg);
+                const result = await new SecurityAuditor(adb).testExportedComponents(pkg);
                 let html = '<div class="result-box"><div class="result-header"><strong>Exported Components</strong></div><div class="component-list">';
                 let hasComponents = false;
-                if (result.findings) {
-                    for (const f of result.findings) {
-                        if (f.components) {
-                            const type = f.type.replace('exported_', '');
-                            for (const c of f.components) {
-                                hasComponents = true;
-                                html += `<div class="component-item"><span class="component-type ${type}">${type}</span><span class="component-name">${c}</span></div>`;
-                            }
-                        }
+                for (const f of result.findings || []) {
+                    if (!f.components) continue;
+                    const type = f.type.replace('exported_', '');
+                    for (const c of f.components) {
+                        hasComponents = true;
+                        html += `<div class="component-item"><span class="component-type ${escapeAttr(type)}">${escapeHtml(type)}</span><span class="component-name">${escapeHtml(c)}</span></div>`;
                     }
                 }
-                if (!hasComponents) {
-                    html += '<div style="padding:12px;color:var(--lum-50)">No exported components found</div>';
-                }
+                if (!hasComponents) html += '<div style="padding:12px;color:var(--lum-50)">No exported components found</div>';
                 html += '</div></div>';
                 results.innerHTML = html;
             } catch (e) {
@@ -1817,11 +2265,8 @@
             const results = document.getElementById('debugResults');
             results.innerHTML = '<div class="empty-state"><p>Checking...</p></div>';
             try {
-                const auditor = new SecurityAuditor(adb);
-                const result = await auditor.testDebuggable(pkg);
-                const badge = result.status === 'pass' ? 'pass' : 'fail';
-                const label = result.status === 'pass' ? '✓ Not Debuggable' : '✗ Debuggable';
-                results.innerHTML = `<div class="result-box"><div class="result-header"><span class="badge ${badge}">${label}</span></div><p style="margin-top:12px;color:var(--lum-70)">${result.description}</p></div>`;
+                const result = await new SecurityAuditor(adb).testDebuggable(pkg);
+                this.renderCheck(results, result, { pass: '✓ Not Debuggable', fail: '✗ Debuggable', review: '⚠ Review' });
             } catch (e) {
                 results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
             }
@@ -1897,6 +2342,89 @@
                 results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
             }
         },
+        lastReport: null,
+        renderReportHtml(report) {
+            const e = escapeHtml;
+            const sevColor = (sev) => ({ critical: 'var(--danger)', high: 'var(--danger)', medium: 'var(--warning)' })[U.normalizeSeverity(sev)] || 'var(--lum-60)';
+            const score = report.riskScore ?? U.computeRiskScore(report);
+            const scoreColor = score >= 45 ? 'var(--danger)' : score >= 20 ? 'var(--warning)' : 'var(--success)';
+            const tile = (n, label, color, bg) => `<div style="padding:8px 16px;border-radius:8px;background:${bg};text-align:center"><div style="font-size:20px;font-weight:700;color:${color}">${n}</div><div style="font-size:11px;color:var(--lum-50)">${label}</div></div>`;
+            let html = '<div class="result-box" style="margin-top:12px">';
+            html += `<div class="result-header"><strong>Scan Report: ${e(report.packageName)}</strong><span style="color:var(--lum-40);font-size:12px;margin-left:auto">${e(report.timestamp)}</span></div>`;
+            html += '<div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">';
+            html += tile(`${score}<span style="font-size:11px">/100</span>`, 'Risk: ' + U.riskLabel(score), scoreColor, 'rgba(255,255,255,0.05)');
+            html += tile(report.summary.pass, 'Pass', 'var(--success)', 'rgba(76,175,80,0.1)');
+            html += tile(report.summary.fail, 'Fail', 'var(--danger)', 'rgba(244,67,54,0.1)');
+            html += tile(report.summary.review, 'Review', 'var(--warning)', 'rgba(255,152,0,0.1)');
+            html += tile(report.summary.error, 'Error', 'var(--lum-50)', 'rgba(255,255,255,0.05)');
+            html += '</div>';
+            if (report.diff) {
+                const d = report.diff;
+                const parts = [];
+                if (d.newFailures.length) parts.push(`<span style="color:var(--danger)">${d.newFailures.length} new failure(s): ${e(d.newFailures.join(', '))}</span>`);
+                if (d.fixed.length) parts.push(`<span style="color:var(--success)">${d.fixed.length} fixed: ${e(d.fixed.join(', '))}</span>`);
+                if (!parts.length) parts.push('<span style="color:var(--lum-50)">No change in failing tests</span>');
+                html += `<div style="margin-top:10px;font-size:12px">Since last scan (${e(d.previous)}): ${parts.join(' &middot; ')}</div>`;
+            }
+            html += `<div class="report-actions" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+                ${['json:JSON', 'md:Markdown', 'html:HTML', 'csv:CSV'].map(x => { const [k, l] = x.split(':'); return `<button class="btn btn-sm btn-ghost" data-export="${k}">Export ${l}</button>`; }).join('')}
+                <button class="btn btn-sm btn-ghost" data-export="copy">Copy summary</button></div></div>`;
+            for (const test of report.tests) {
+                const badge = test.status === 'pass' ? 'pass' : test.status === 'fail' ? 'fail' : test.status === 'review' ? 'warning' : '';
+                const label = test.status === 'pass' ? '✓ Pass' : test.status === 'fail' ? '✗ Fail' : test.status === 'review' ? '⚠ Review' : '? Error';
+                html += `<div class="result-box" style="margin-top:8px"><div class="result-header"><span class="badge ${badge}">${label}</span><strong style="margin-left:8px">${e(test.title || test.id)}</strong>${test.category ? `<span style="margin-left:auto;font-size:11px;color:var(--lum-40)">${e(test.category)}</span>` : ''}</div>`;
+                if (test.description) html += `<p style="margin-top:6px;color:var(--lum-50);font-size:12px">${e(test.description)}</p>`;
+                if (test.findings && test.findings.length > 0) {
+                    html += '<div style="margin-top:8px">';
+                    for (const f of test.findings) {
+                        html += `<div style="padding:4px 0;font-size:12px;color:${sevColor(f.severity)}">&bull; ${e(f.note || f.type || '')}${f.recommendation ? `<div style="color:var(--lum-50);margin-left:12px">Fix: ${e(f.recommendation)}</div>` : ''}</div>`;
+                    }
+                    html += '</div>';
+                }
+                if (test.error) html += `<p style="margin-top:6px;color:var(--danger);font-size:12px">${e(test.error)}</p>`;
+                html += '</div>';
+            }
+            return html;
+        },
+        recordScan(report) {
+            const failed = report.tests.filter(t => t.status === 'fail').map(t => t.id);
+            const history = store.get('scanHistory', []);
+            const prev = history.find(h => h.pkg === report.packageName);
+            if (prev) {
+                report.diff = {
+                    previous: prev.ts.slice(0, 19).replace('T', ' '),
+                    newFailures: failed.filter(id => !prev.failed.includes(id)),
+                    fixed: prev.failed.filter(id => !failed.includes(id))
+                };
+            }
+            history.unshift({ pkg: report.packageName, ts: report.timestamp, failed, risk: report.riskScore, summary: report.summary });
+            store.set('scanHistory', history.filter((h, i, a) => a.findIndex(x => x.pkg === h.pkg) === i).slice(0, 30));
+        },
+        showReport(report, container) {
+            this.lastReport = report;
+            container.innerHTML = this.renderReportHtml(report);
+            container.querySelector('.report-actions')?.addEventListener('click', (ev) => {
+                const b = ev.target.closest('[data-export]');
+                if (b) this.exportReport(b.dataset.export);
+            });
+        },
+        exportReport(kind) {
+            const r = this.lastReport;
+            if (!r) return;
+            const meta = { device: [state.deviceInfo.brand, state.deviceInfo.model, state.deviceInfo.androidVersion ? 'Android ' + state.deviceInfo.androidVersion : ''].filter(Boolean).join(' ') };
+            const base = `${U.safeFileName(r.packageName)}_${U.timestampForFile()}`;
+            if (kind === 'json') U.downloadBlob(new Blob([JSON.stringify({ generator: 'ADB Auditor (created by Sandeep Wawdane, enhanced by 0x0806)', device: meta.device, ...r }, null, 2)], { type: 'application/json' }), base + '.json');
+            else if (kind === 'md') U.downloadBlob(new Blob([U.reportToMarkdown(r, meta)], { type: 'text/markdown' }), base + '.md');
+            else if (kind === 'html') U.downloadBlob(new Blob([U.reportToHtml(r, meta)], { type: 'text/html' }), base + '.html');
+            else if (kind === 'csv') U.downloadBlob(new Blob([U.reportToCSV(r)], { type: 'text/csv' }), base + '.csv');
+            else if (kind === 'copy') {
+                const failing = r.tests.filter(t => t.status === 'fail').map(t => `- ${t.title}`).join('\n') || '- none';
+                navigator.clipboard?.writeText(`${r.packageName}: risk ${r.riskScore}/100 (${U.riskLabel(r.riskScore)}); pass ${r.summary.pass}, fail ${r.summary.fail}, review ${r.summary.review}\nFailing:\n${failing}`)
+                    .then(() => showToast('Summary copied', 'success'), () => showToast('Copy failed', 'error'));
+                return;
+            }
+            showToast('Report exported', 'success');
+        },
         async runFullScan() {
             const pkg = document.getElementById('fullScanSelect')?.value;
             if (!pkg) { showToast('Select an application', 'warning'); return; }
@@ -1908,47 +2436,102 @@
             progress.classList.remove('hidden');
             try {
                 const auditor = new SecurityAuditor(adb);
-                const scanResult = await auditor.runFullAudit(pkg, (name, current, total) => {
+                const report = await auditor.runFullAudit(pkg, (name, current, total) => {
                     statusEl.textContent = `Running: ${name} (${current}/${total})`;
                     bar.style.width = Math.round((current / total) * 100) + '%';
                 });
                 progress.classList.add('hidden');
-                let html = '<div class="result-box" style="margin-top:12px">';
-                html += `<div class="result-header"><strong>Scan Report: ${escapeHtml(pkg)}</strong><span style="color:var(--lum-40);font-size:12px;margin-left:auto">${escapeHtml(scanResult.timestamp)}</span></div>`;
-                html += '<div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">';
-                html += `<div style="padding:8px 16px;border-radius:8px;background:rgba(76,175,80,0.1);text-align:center"><div style="font-size:20px;font-weight:700;color:var(--success)">${scanResult.summary.pass}</div><div style="font-size:11px;color:var(--lum-50)">Pass</div></div>`;
-                html += `<div style="padding:8px 16px;border-radius:8px;background:rgba(244,67,54,0.1);text-align:center"><div style="font-size:20px;font-weight:700;color:var(--danger)">${scanResult.summary.fail}</div><div style="font-size:11px;color:var(--lum-50)">Fail</div></div>`;
-                html += `<div style="padding:8px 16px;border-radius:8px;background:rgba(255,152,0,0.1);text-align:center"><div style="font-size:20px;font-weight:700;color:var(--warning)">${scanResult.summary.review}</div><div style="font-size:11px;color:var(--lum-50)">Review</div></div>`;
-                html += `<div style="padding:8px 16px;border-radius:8px;background:rgba(255,255,255,0.05);text-align:center"><div style="font-size:20px;font-weight:700;color:var(--lum-50)">${scanResult.summary.error}</div><div style="font-size:11px;color:var(--lum-50)">Error</div></div>`;
-                html += '</div></div>';
-                for (const test of scanResult.tests) {
-                    const badge = test.status === 'pass' ? 'pass' : test.status === 'fail' ? 'fail' : test.status === 'review' ? 'warning' : '';
-                    const label = test.status === 'pass' ? '✓ Pass' : test.status === 'fail' ? '✗ Fail' : test.status === 'review' ? '⚠ Review' : '? Error';
-                    html += `<div class="result-box" style="margin-top:8px"><div class="result-header"><span class="badge ${badge}">${label}</span><strong style="margin-left:8px">${escapeHtml(test.title || test.id)}</strong></div>`;
-                    if (test.description) {
-                        html += `<p style="margin-top:6px;color:var(--lum-50);font-size:12px">${escapeHtml(test.description)}</p>`;
-                    }
-                    if (test.findings && test.findings.length > 0) {
-                        html += '<div style="margin-top:8px">';
-                        for (const f of test.findings) {
-                            const note = f.note || f.type || '';
-                            const sev = f.severity || '';
-                            const sevColor = sev === 'high' ? 'var(--danger)' : sev === 'medium' ? 'var(--warning)' : 'var(--lum-60)';
-                            html += `<div style="padding:4px 0;font-size:12px;color:${sevColor}">• ${escapeHtml(note)}</div>`;
-                        }
-                        html += '</div>';
-                    }
-                    if (test.error) {
-                        html += `<p style="margin-top:6px;color:var(--danger);font-size:12px">${escapeHtml(test.error)}</p>`;
-                    }
-                    html += '</div>';
-                }
-                const blob = new Blob([JSON.stringify(scanResult, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                html += `<div style="margin-top:16px;text-align:center"><a href="${url}" download="${escapeAttr(pkg)}_security_scan.json" class="btn btn-ghost" style="display:inline-flex;align-items:center;gap:6px;text-decoration:none"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>Download Full Report (JSON)</a></div>`;
-                results.innerHTML = html;
+                this.recordScan(report);
+                this.showReport(report, results);
             } catch (e) {
                 progress.classList.add('hidden');
+                results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
+            }
+        },
+        async runDeviceAudit() {
+            const results = document.getElementById('deviceAuditResults');
+            const status = document.getElementById('deviceAuditStatus');
+            results.innerHTML = '<div class="empty-state"><p>Auditing device...</p></div>';
+            try {
+                const body = await new SecurityAuditor(adb).runDeviceAudit((name, i, t) => { if (status) status.textContent = `${name} (${i}/${t})`; });
+                const report = { packageName: 'Device', timestamp: new Date().toISOString(), ...body };
+                report.riskScore = U.computeRiskScore(report);
+                this.showReport(report, results);
+                if (status) status.textContent = '';
+            } catch (e) {
+                results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
+            }
+        },
+        triageRows: [],
+        triageSort: { key: 'risk', dir: -1 },
+        async runTriage() {
+            const results = document.getElementById('triageResults');
+            const bar = document.getElementById('triageBar');
+            const status = document.getElementById('triageStatus');
+            const includeSystem = document.getElementById('triageSystem')?.checked;
+            results.innerHTML = '<div class="empty-state"><p>Listing applications...</p></div>';
+            try {
+                const pkgs = await adb.listPackages(!!includeSystem);
+                const auditor = new SecurityAuditor(adb);
+                this.triageRows = await auditor.triageApps(pkgs, (pkg, i, t) => {
+                    if (status) status.textContent = `${i}/${t} - ${pkg}`;
+                    if (bar) bar.style.width = Math.round(i / t * 100) + '%';
+                });
+                this.renderTriage();
+            } catch (e) {
+                results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
+            }
+        },
+        renderTriage() {
+            const results = document.getElementById('triageResults');
+            if (!results) return;
+            const { key, dir } = this.triageSort;
+            const rows = [...this.triageRows].sort((a, b) => {
+                const av = a[key], bv = b[key];
+                if (typeof av === 'string' || typeof bv === 'string') return String(av ?? '').localeCompare(String(bv ?? '')) * dir;
+                return ((av === true ? 1 : av === false ? 0 : av ?? -1) - (bv === true ? 1 : bv === false ? 0 : bv ?? -1)) * dir;
+            });
+            const cols = [['package', 'Package'], ['risk', 'Risk'], ['debuggable', 'Debug'], ['allowBackup', 'Backup'], ['targetSdk', 'Target'], ['minSdk', 'Min'], ['dangerousPerms', 'Perms'], ['installer', 'Installer']];
+            const yes = (v) => v ? '<span class="badge fail">yes</span>' : '<span style="color:var(--lum-40)">no</span>';
+            let html = `<div class="result-box" style="margin-top:12px;overflow-x:auto"><div class="result-header"><strong>${rows.length} apps</strong>
+                <button class="btn btn-sm btn-ghost" style="margin-left:auto" data-triage-csv="1">Export CSV</button></div>
+                <table class="ab-table"><thead><tr>${cols.map(([k, l]) => `<th data-sort="${k}" tabindex="0" role="button" aria-label="Sort by ${l}">${l}${key === k ? (dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('')}</tr></thead><tbody>`;
+            for (const r of rows) {
+                const riskColor = r.risk >= 40 ? 'var(--danger)' : r.risk >= 20 ? 'var(--warning)' : 'var(--lum-60)';
+                html += `<tr data-pkg="${escapeAttr(r.package)}" tabindex="0" title="Click to run a full scan"><td class="mono">${escapeHtml(r.package)}</td>`;
+                html += r.error ? `<td colspan="7" style="color:var(--danger)">${escapeHtml(r.error)}</td>`
+                    : `<td style="color:${riskColor};font-weight:600">${r.risk}</td><td>${yes(r.debuggable)}</td><td>${yes(r.allowBackup)}</td><td>${escapeHtml(r.targetSdk ?? '-')}</td><td>${escapeHtml(r.minSdk ?? '-')}</td><td>${r.dangerousPerms}</td><td class="mono">${escapeHtml(r.installer)}</td>`;
+                html += '</tr>';
+            }
+            results.innerHTML = html + '</tbody></table></div>';
+            results.onclick = (ev) => {
+                const th = ev.target.closest('th[data-sort]');
+                if (th) { const k = th.dataset.sort; this.triageSort = { key: k, dir: this.triageSort.key === k ? -this.triageSort.dir : (k === 'package' ? 1 : -1) }; this.renderTriage(); return; }
+                if (ev.target.closest('[data-triage-csv]')) { this.exportTriageCsv(); return; }
+                const tr = ev.target.closest('tr[data-pkg]');
+                if (tr) this.openAudit(tr.dataset.pkg, 'fullScan');
+            };
+        },
+        exportTriageCsv() {
+            const header = ['package', 'risk', 'debuggable', 'allowBackup', 'cleartext', 'targetSdk', 'minSdk', 'dangerousPerms', 'installer'];
+            const rows = [header, ...this.triageRows.filter(r => !r.error).map(r => header.map(h => r[h]))];
+            const cell = (v) => { const s = String(v ?? ''); return '"' + (/^[=+\-@]/.test(s) ? "'" + s : s).replace(/"/g, '""') + '"'; };
+            U.downloadBlob(new Blob([rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv' }), `app_triage_${U.timestampForFile()}.csv`);
+        },
+        async loadNetwork() {
+            const pkg = document.getElementById('networkSelect')?.value || '';
+            const results = document.getElementById('networkResults');
+            results.innerHTML = '<div class="empty-state"><p>Collecting...</p></div>';
+            try {
+                const auditor = new SecurityAuditor(adb);
+                const [conns, procs] = await Promise.all([auditor.getActiveConnections(pkg || undefined), auditor.getRunningProcesses(pkg || undefined)]);
+                const stateBadge = (s) => `<span class="badge ${s === 'ESTABLISHED' ? 'pass' : s === 'LISTEN' ? 'warning' : ''}">${escapeHtml(s)}</span>`;
+                let html = `<div class="result-box" style="overflow-x:auto"><div class="result-header"><strong>Connections (${conns.length})</strong></div>`;
+                html += conns.length ? `<table class="ab-table"><thead><tr><th>Local</th><th>Remote</th><th>State</th><th>UID</th></tr></thead><tbody>${conns.map(c => `<tr><td class="mono">${escapeHtml(c.local)}</td><td class="mono">${escapeHtml(c.remote)}</td><td>${stateBadge(c.state)}</td><td>${escapeHtml(c.uid)}</td></tr>`).join('')}</tbody></table>` : '<p style="color:var(--lum-50);margin-top:8px">No connections found</p>';
+                html += `</div><div class="result-box" style="margin-top:8px;overflow-x:auto"><div class="result-header"><strong>Processes (${procs.length})</strong></div>`;
+                html += procs.length ? `<table class="ab-table"><thead><tr><th>PID</th><th>User</th><th>RSS</th><th>Name</th></tr></thead><tbody>${procs.slice(0, 500).map(p => `<tr><td>${escapeHtml(p.pid)}</td><td>${escapeHtml(p.user)}</td><td>${escapeHtml(p.rss)}</td><td class="mono">${escapeHtml(p.name)}</td></tr>`).join('')}</tbody></table>` : '<p style="color:var(--lum-50);margin-top:8px">No processes found</p>';
+                results.innerHTML = html + '</div>';
+            } catch (e) {
                 results.innerHTML = `<div class="result-box"><span class="badge fail">Error</span><p style="margin-top:8px">${escapeHtml(e.message)}</p></div>`;
             }
         }
@@ -1969,76 +2552,153 @@
             app.closeAddMenu();
         }
     });
+    const sectionOrder = ['overview', 'apps', 'files', 'screenshot', 'shell', 'security'];
     document.querySelectorAll('.dock-item').forEach(item => {
-        item.addEventListener('click', () => {
-            if (!item.classList.contains('disabled')) {
-                navigate(item.dataset.section);
-            }
-        });
+        item.setAttribute('role', 'button');
+        item.setAttribute('tabindex', '0');
+        item.setAttribute('aria-label', item.getAttribute('title') || item.dataset.section);
+        const activate = () => { if (!item.classList.contains('disabled')) navigate(item.dataset.section); };
+        item.addEventListener('click', activate);
+        item.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
     });
+
+    /* ---------- environment checks ---------- */
+
+    function showBanner(message) {
+        const bar = document.createElement('div');
+        bar.className = 'ab-banner';
+        bar.setAttribute('role', 'alert');
+        bar.textContent = message;
+        document.body.prepend(bar);
+    }
+    if (!navigator.usb) {
+        showBanner('WebUSB is not available in this browser. Use Chrome, Edge or Opera (desktop) over HTTPS or localhost.');
+    } else if (window.isSecureContext === false) {
+        showBanner('WebUSB requires a secure context. Open this page over HTTPS or from http://localhost.');
+    }
+
+    /* ---------- keep-alive: detect a sleeping / stale device ---------- */
+
+    let keepAlive = null;
+    function startKeepAlive() {
+        stopKeepAlive();
+        let failures = 0;
+        keepAlive = setInterval(async () => {
+            if (!adb || !state.connected || document.hidden) return;
+            if (Date.now() - adb.lastActivity < 20000) { failures = 0; return; }
+            failures = (await adb.ping()) ? 0 : failures + 1;
+            if (failures >= 2) { failures = 0; adb.markDisconnected('Device stopped responding'); }
+        }, 15000);
+    }
+    function stopKeepAlive() { if (keepAlive) { clearInterval(keepAlive); keepAlive = null; } }
+    const origConnect = app.connect.bind(app);
+    app.connect = async function() { await origConnect(); if (state.connected) startKeepAlive(); };
+    const origHandleLost = app.handleDeviceDisconnected.bind(app);
+    app.handleDeviceDisconnected = function(d) { stopKeepAlive(); app.stopLiveScreenshot(); return origHandleLost(d); };
+    const origDisconnect = app.disconnect.bind(app);
+    app.disconnect = async function() { stopKeepAlive(); app.stopLiveScreenshot(); return origDisconnect(); };
+
+    window.addEventListener('beforeunload', () => { if (adb && adb.device?.opened) { adb.device.close().catch(() => {}); } });
+    window.addEventListener('unhandledrejection', (e) => {
+        console.error('Unhandled rejection:', e.reason);
+        const msg = e.reason && e.reason.message ? e.reason.message : String(e.reason);
+        if (!/ResizeObserver/.test(msg)) showToast('Unexpected error: ' + msg, 'error');
+    });
+
+    /* ---------- keyboard shortcuts + command palette ---------- */
+
+    const commands = () => {
+        const list = [
+            ...sectionOrder.map((s, i) => ({ name: 'Go to ' + s[0].toUpperCase() + s.slice(1), hint: 'Alt+' + (i + 1), run: () => navigate(s), needsDevice: s !== 'overview' })),
+            { name: 'Connect device', run: () => app.connect(), when: () => !state.connected },
+            { name: 'Disconnect device', hint: 'Alt+D', run: () => app.disconnect(), when: () => state.connected },
+            { name: 'Refresh current view', hint: 'Alt+R', run: () => refreshCurrent(), needsDevice: true },
+            { name: 'Take screenshot', run: () => { navigate('screenshot'); app.captureScreenshot(); }, needsDevice: true },
+            { name: 'Security: full scan', run: () => { navigate('security'); app.switchSecurityTab('fullScan'); loadSecurityApps(); }, needsDevice: true },
+            { name: 'Security: device posture audit', run: () => { navigate('security'); app.switchSecurityTab('device'); loadSecurityApps(); }, needsDevice: true },
+            { name: 'Security: triage all apps', run: () => { navigate('security'); app.switchSecurityTab('triage'); loadSecurityApps(); }, needsDevice: true },
+            { name: 'Security: live logcat', run: () => { navigate('security'); app.switchSecurityTab('logcat'); }, needsDevice: true },
+            { name: 'Export device info (JSON)', run: () => app.exportDeviceInfo(), needsDevice: true },
+            { name: 'Keyboard shortcuts', hint: '?', run: () => showShortcuts() },
+            { name: 'About ADB Auditor', run: () => showAbout() }
+        ];
+        return list.filter(c => (!c.needsDevice || state.connected) && (!c.when || c.when()));
+    };
+    function refreshCurrent() {
+        const s = state.currentSection;
+        if (s === 'overview') app.loadOverview(); else if (s === 'apps') app.loadApps(); else if (s === 'files') app.refreshFiles();
+        else if (s === 'screenshot') app.captureScreenshot(); else if (s === 'security') loadSecurityApps();
+    }
+    function showShortcuts() {
+        const rows = [['Alt + 1 … 6', 'Switch section'], ['Alt + R', 'Refresh current view'], ['Alt + D', 'Disconnect'], ['Ctrl/Cmd + K', 'Command palette'], ['?', 'This help'],
+            ['Tab', 'Shell: autocomplete'], ['↑ / ↓', 'Shell: history'], ['Ctrl + C', 'Shell: stop streaming command'], ['Ctrl + L', 'Shell: clear'], ['Esc', 'Close dialogs']];
+        const wrap = document.createElement('div');
+        wrap.innerHTML = '<table class="ab-table"><tbody>' + rows.map(([k, v]) => `<tr><td class="mono">${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`).join('') + '</tbody></table>';
+        openModal({ title: 'Keyboard shortcuts', body: wrap, buttons: [{ label: 'Close', primary: true }] });
+    }
+    function showAbout() {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `<p><strong>ADB Auditor</strong> &mdash; browser-based Android security auditing over WebUSB. 100% client-side.</p>
+            <p style="margin-top:10px">Created by <a href="https://github.com/thecybersandeep" target="_blank" rel="noopener noreferrer">Sandeep Wawdane</a> (<a href="https://github.com/thecybersandeep/adbauditor" target="_blank" rel="noopener noreferrer">original project</a>).</p>
+            <p style="margin-top:6px">Enhanced &amp; maintained by <a href="https://github.com/0x0806" target="_blank" rel="noopener noreferrer">0x0806</a> (<a href="https://github.com/0x0806/adbauditor" target="_blank" rel="noopener noreferrer">this fork</a>).</p>
+            <p style="margin-top:10px;color:var(--lum-50);font-size:12px">Use only on devices you are authorised to test.</p>`;
+        openModal({ title: 'About', body: wrap, buttons: [{ label: 'Close', primary: true }] });
+    }
+    function showPalette() {
+        const wrap = document.createElement('div');
+        const input = document.createElement('input');
+        input.type = 'text'; input.className = 'text-input'; input.placeholder = 'Type a command...'; input.setAttribute('aria-label', 'Command');
+        const list = document.createElement('div');
+        list.className = 'ab-palette-list'; list.setAttribute('role', 'listbox');
+        wrap.append(input, list);
+        const all = commands();
+        let shown = [], sel = 0;
+        const m = openModal({ title: 'Command palette', body: wrap, buttons: [] });
+        const draw = () => {
+            const q = input.value.toLowerCase();
+            shown = all.filter(c => c.name.toLowerCase().includes(q));
+            sel = Math.min(sel, Math.max(0, shown.length - 1));
+            list.innerHTML = shown.map((c, i) => `<div class="ab-palette-item${i === sel ? ' sel' : ''}" role="option" data-i="${i}"><span>${escapeHtml(c.name)}</span><span class="mono">${escapeHtml(c.hint || '')}</span></div>`).join('') || '<div class="ab-palette-item">No matching command</div>';
+        };
+        const run = (i) => { const c = shown[i]; if (c) { m.close(); setTimeout(c.run, 0); } };
+        input.addEventListener('input', () => { sel = 0; draw(); });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, shown.length - 1); draw(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); draw(); }
+            else if (e.key === 'Enter') { e.preventDefault(); run(sel); }
+        });
+        list.addEventListener('click', (e) => { const it = e.target.closest('[data-i]'); if (it) run(parseInt(it.dataset.i, 10)); });
+        draw();
+    }
+    document.addEventListener('keydown', (e) => {
+        const tag = (e.target.tagName || '').toLowerCase();
+        const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); if (!document.querySelector('.ab-modal-overlay')) showPalette(); return; }
+        if (document.querySelector('.ab-modal-overlay')) return;
+        if (e.altKey && !e.ctrlKey && !e.metaKey) {
+            const n = parseInt(e.key, 10);
+            if (n >= 1 && n <= 6) { e.preventDefault(); if (n === 1 || state.connected) navigate(sectionOrder[n - 1]); return; }
+            if (e.key.toLowerCase() === 'r' && state.connected) { e.preventDefault(); refreshCurrent(); return; }
+            if (e.key.toLowerCase() === 'd' && state.connected) { e.preventDefault(); app.disconnect(); return; }
+        }
+        if (!typing && e.key === '?') { e.preventDefault(); showShortcuts(); }
+    });
+
     app.initDeviceManager().catch(err => {
         console.warn('Device manager initialization failed:', err);
     });
     navigate('overview');
     window.app = app;
+    window.__AB = { state, app, store, openModal, askConfirm, askInput, showToast };
+
     window.viewStorageFile = async function(encodedPath) {
         const path = safeDecode(encodedPath);
         const fileName = path.split('/').pop() || 'file';
-        showLoading('Loading file...');
+        showLoading('Loading file...', fileName);
         try {
-            const content = await shellReadBase64(path);
-            const clean = content.trim().replace(/\s/g, '');
-            if (!clean || clean.includes('Permission denied') || clean.includes('No such file') || clean.includes('not found')) {
-                throw new Error('Cannot read file — permission denied or not found');
-            }
-            const bytes = base64ToBytes(clean);
-            const blob = new Blob([bytes]);
-            const reader = new FileReader();
-            reader.onload = function() {
-                hideLoading();
-                const textContent = reader.result;
-                const existing = document.getElementById('fileViewModal');
-                if (existing) existing.remove();
-                const modal = document.createElement('div');
-                modal.id = 'fileViewModal';
-                modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;';
-                const inner = document.createElement('div');
-                inner.style.cssText = 'background:#0f1015;border:1px solid rgba(255,255,255,0.1);border-radius:16px;max-width:800px;width:100%;max-height:85vh;display:flex;flex-direction:column;';
-                const header = document.createElement('div');
-                header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.06);';
-                const title = document.createElement('span');
-                title.style.cssText = 'font-weight:600;color:#fff;font-family:monospace;font-size:13px;';
-                title.textContent = fileName;
-                const pathEl = document.createElement('span');
-                pathEl.style.cssText = 'font-size:11px;color:var(--lum-40);margin-left:8px;';
-                pathEl.textContent = path;
-                const headerLeft = document.createElement('div');
-                headerLeft.style.cssText = 'display:flex;flex-direction:column;gap:2px;overflow:hidden;flex:1;';
-                headerLeft.appendChild(title);
-                headerLeft.appendChild(pathEl);
-                const closeBtn = document.createElement('button');
-                closeBtn.style.cssText = 'background:#1a1b24;border:none;width:32px;height:32px;border-radius:8px;cursor:pointer;color:#fff;font-size:18px;flex-shrink:0;';
-                closeBtn.textContent = '\u00d7';
-                closeBtn.onclick = function() { modal.remove(); };
-                header.appendChild(headerLeft);
-                header.appendChild(closeBtn);
-                const body = document.createElement('div');
-                body.style.cssText = 'padding:20px;overflow:auto;flex:1;';
-                const pre = document.createElement('pre');
-                pre.style.cssText = 'font-family:monospace;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:#a0a3b1;margin:0;';
-                pre.textContent = textContent || '[Empty file]';
-                body.appendChild(pre);
-                inner.appendChild(header);
-                inner.appendChild(body);
-                modal.appendChild(inner);
-                modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
-                document.body.appendChild(modal);
-            };
-            reader.onerror = function() {
-                hideLoading();
-                showToast('Failed to read file content', 'error');
-            };
-            reader.readAsText(blob);
+            const bytes = await readDeviceFile(path, null, !isSdcardPath(path));
+            hideLoading();
+            previewBytes(fileName, path, bytes);
         } catch (e) {
             hideLoading();
             showToast('Error: ' + (e.message || 'Unknown'), 'error');
@@ -2048,23 +2708,10 @@
         const pkg = safeDecode(encodedPkg);
         const path = safeDecode(encodedPath);
         const name = safeDecode(encodedName);
-        showLoading('Downloading...');
+        showLoading('Downloading...', name);
         try {
-            const content = await shellReadBase64(path);
-            const clean = content.trim().replace(/\s/g, '');
-            if (!clean || clean.includes('Permission denied') || clean.includes('No such file')) {
-                throw new Error('Cannot read file — permission denied or not found');
-            }
-            const bytes = base64ToBytes(clean);
-            const blob = new Blob([bytes]);
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = pkg + '_' + name;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            const bytes = await readDeviceFile(path, (n, total) => showLoading('Downloading...', total ? `${formatSize(n)} / ${formatSize(total)}` : formatSize(n)), !isSdcardPath(path));
+            U.downloadBlob(new Blob([bytes]), pkg + '_' + name);
             hideLoading();
             showToast('Downloaded: ' + name + ' (' + formatSize(bytes.length) + ')', 'success');
         } catch (e) {

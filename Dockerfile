@@ -1,18 +1,19 @@
 FROM nginx:alpine
 
 LABEL maintainer="Sandeep Wawdane <contact@thecybersandeep.com>"
+LABEL org.opencontainers.image.authors="Sandeep Wawdane (original creator); 0x0806 (enhancements)"
+LABEL org.opencontainers.image.source="https://github.com/0x0806/adbauditor"
 LABEL description="ADB Auditor - Professional Android Security Auditing Platform"
-LABEL version="1.0.0"
+LABEL version="2.0.0"
 
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY . /usr/share/nginx/html/
 
-RUN rm /usr/share/nginx/html/Dockerfile \
-    /usr/share/nginx/html/docker-compose.yml \
-    /usr/share/nginx/html/.dockerignore \
-    /usr/share/nginx/html/README.md \
-    /usr/share/nginx/html/LICENSE \
-    /usr/share/nginx/html/CNAME 2>/dev/null || true
+RUN cd /usr/share/nginx/html && rm -rf Dockerfile docker-compose.yml nginx.conf .dockerignore .git .github \
+    README.md CHANGELOG.md CNAME docs tests scripts package.json 2>/dev/null || true
 
 EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -q --spider http://localhost/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

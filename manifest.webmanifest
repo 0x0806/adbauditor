@@ -1,0 +1,11 @@
+{
+  "name": "ADB Auditor",
+  "short_name": "ADB Auditor",
+  "description": "Browser-based Android security auditing over WebUSB. Created by Sandeep Wawdane; enhanced by 0x0806.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "icons": [{ "src": "img/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
