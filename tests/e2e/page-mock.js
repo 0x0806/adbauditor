@@ -3,15 +3,16 @@
     const { MockAdbDevice } = window.__MOCK_MODULE;
     const FIX = window.__FIXTURES;
     const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
-    const EVIL = '<img src=x onerror="window.__pwned=(window.__pwned||0)+1">';
+    const DEMO = !!window.__DEMO;      // clean, presentable data for screenshots of the hosted site
+    const EVIL = DEMO ? 'Pictures' : '<img src=x onerror="window.__pwned=(window.__pwned||0)+1">';
     const props = {
-        model: 'Pixel <b>E2E</b>', brand: 'google', manufacturer: 'Google', device: 'e2e', androidVersion: '14', sdkVersion: '34',
+        model: DEMO ? 'Pixel 9 Pro' : 'Pixel <b>E2E</b>', brand: 'google', manufacturer: 'Google', device: 'e2e', androidVersion: '14', sdkVersion: '34',
         serial: 'MOCK123', buildId: 'UQ1A.240105', securityPatch: '2026-10-05', fingerprint: 'google/e2e/e2e:14/UQ1A/1:user/release-keys',
         cpuAbi: 'arm64-v8a', buildType: 'user', buildTags: 'release-keys', bootloaderLocked: '1', verifiedBoot: 'green', debuggable: '0', selinuxMode: ''
     };
     const files = {
         '/storage/emulated/0': [
-            ['drwxrwx--x', 'DCIM'], ['drwxrwx--x', EVIL], ['-rw-rw----', 'notes $(reboot).txt', 1234], ['-rw-rw----', "it's.txt", 5]
+            ['drwxrwx--x', 'DCIM'], ['drwxrwx--x', EVIL], ['-rw-rw----', DEMO ? 'notes.txt' : 'notes $(reboot).txt', 1234], ['-rw-rw----', DEMO ? 'report.pdf' : "it's.txt", 5]
         ]
     };
     const lsLine = ([perm, name, size]) => `${perm} 2 u0_a123 sdcard_rw ${size || 4096} 2024-03-04 11:30 ${name}`;
@@ -41,7 +42,7 @@
             if (cmd.startsWith('stat ')) return 'File: x\nSize: 10';
             if (cmd.startsWith('md5sum') || cmd.startsWith('sha1sum') || cmd.startsWith('sha256sum')) return 'deadbeef  file';
             if (cmd.startsWith('find ')) return cmd.includes('-iname') ? '/storage/emulated/0/DCIM/photo.jpg\n/storage/emulated/0/notes.txt' : '/storage/emulated/0/DCIM/a.txt\n/storage/emulated/0/DCIM/b.txt';
-            if (cmd.startsWith('pm list packages')) return 'package:com.example.app\npackage:com.bad.debuggable\npackage:com.evil.<b>x';
+            if (cmd.startsWith('pm list packages')) return 'package:com.example.app\npackage:com.bad.debuggable\npackage:' + (DEMO ? 'org.example.notes' : 'com.evil.<b>x');
             if (cmd.startsWith('pm install')) return 'Success';
             if (cmd.startsWith('pm path') && cmd.includes('com.split.app')) return 'package:/data/app/split_a.apk\npackage:/data/app/split_b.apk';
             if (cmd.includes('ping -c')) return new Promise(() => {});

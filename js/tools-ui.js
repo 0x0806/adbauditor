@@ -413,7 +413,8 @@
         function renderDb() {
             const box = $('dbView'); if (!box || !db) return;
             const tables = db.tables();
-            const walNote = db.walFrames ? `<span class="badge success">WAL merged (${db.walFrames} commits)</span>` : '<span class="badge warning">no WAL applied - recent rows may be missing</span>';
+            const walNote = db.walFrames ? `<span class="badge success">WAL merged (${db.walFrames} commits)</span>`
+                : db.isWal ? '<span class="badge warning">WAL mode, but no -wal file loaded - recent rows may be missing</span>' : '';
             let h = `<div class="result-box" style="margin-top:12px"><div class="result-header"><strong>${esc(dbName)}</strong><span style="margin-left:auto">${walNote}</span></div>
                 <div style="color:var(--lum-50);font-size:12px;margin:6px 0">page size ${db.pageSize}, ${db.pageCount} pages, ${['', 'UTF-8', 'UTF-16le', 'UTF-16be'][db.encoding] || '?'}, ${tables.length} tables</div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap">${tables.map(t => `<button class="btn btn-sm ${t.name === dbTable ? 'btn-primary' : 'btn-ghost'}" data-do="dbTable" data-t="${esc(t.name)}">${esc(t.name)}</button>`).join('')}</div></div>`;

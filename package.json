@@ -7,7 +7,9 @@
     "test": "node --test --test-force-exit --test-timeout=20000 \"tests/*.test.js\"",
     "lint": "node scripts/check-syntax.js && eslint .",
     "test:e2e": "node tests/e2e/run.js",
-    "serve": "python3 -m http.server 8080"
+    "serve": "python3 -m http.server 8080",
+    "test:site": "node scripts/site-check.js",
+    "screenshots": "node scripts/site-check.js --screenshots img/screenshots"
   },
   "engines": {
     "node": ">=18"

@@ -17,7 +17,14 @@ Found with mutation fuzzing of every parser, a concurrency stress test, adversar
 - Toast de-duplication skipped items while removing from a live collection.
 - Service worker tried to cache partial (206) responses and logged errors.
 
+### UI fixes (found by screenshotting the hosted site)
+- The header's "add device" button never showed its icon: `.btn` padding overrode `.add-device-btn` and squeezed the SVG to 0 px wide.
+- The Tools and file-browser controls used CSS classes that were never defined (`tools-row`, `tools-field`, `tools-card`...), so selects showed as unstyled white native widgets and labels ran into their fields. Styles added (dark and light theme).
+- The logo text wrapped onto two lines when connected.
+- The SQLite viewer warned "no WAL applied" for every database; it now warns only for databases in WAL mode that were opened without their `-wal` file.
+
 ### Tests
+- `npm run test:site` (`scripts/site-check.js`) tests a deployed copy in headless Chrome: every asset returns 200, no console/CSP errors, manifest, service worker, offline reload, custom 404 page, and a connected session against a fake device. `--serve` tests the working tree locally (run in CI); `--screenshots <dir>` captures the README screenshots from the live site.
 - New: mutation-fuzz suite (APK/ZIP, binary XML, DEX, SQLite, inner-file corruption), device-manager tests, deterministic concurrency stress test (no leaked socket queues), 64-bit rowid fixtures, older-Android `ls` formats.
 - ESLint (errors fail the build: undefined variables, duplicate keys, unreachable code...) added to `npm run lint` and CI; it found no undefined identifiers in the shipped code.
 - End-to-end run grew to 85 checks and now also exercises APK install/download (single and split), upload/download, file preview with secret warning, the Root toggle on a non-rooted device, live screenshots, every security sub-tab, streaming shell commands with Ctrl+C and root shell quoting.

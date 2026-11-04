@@ -2866,6 +2866,29 @@
         .file-link { color: var(--lum-40); font-size: 12px; }
         .file-action-btn.danger:hover { color: var(--alert, #ef4444); }
         .logcat-output.nowrap { white-space: pre; overflow-x: auto; }
+
+        /* ---- layout fixes found by screenshotting the hosted site ---- */
+        .btn.add-device-btn { padding: 0; width: 36px; height: 36px; }          /* .btn (declared later) used to win and squeeze the icon to 0px */
+        .btn.add-device-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+        .logo-text { white-space: nowrap; }
+        .tools-card { margin-top: 12px; }
+        .tools-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin: 10px 0; }
+        .tools-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--lum-60); min-width: 120px; }
+        .tools-pair { display: inline-flex; align-items: center; gap: 6px; margin: 0 16px 8px 0; font-size: 13px; color: var(--lum-70); }
+        .tools-out { margin-top: 12px; max-height: 340px; overflow: auto; min-height: 0; }
+        .tools-out:empty { display: none; }
+        .tools-card code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+        .tools-card input[type="range"] { width: 200px; }
+        .tools-card select, .file-toolbar select, .logcat-controls select, #triagePerm, .tools-field select {
+            background: var(--depth-4); color: var(--lum-90); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
+            padding: 9px 12px; font: inherit; font-size: 13px; color-scheme: dark; max-width: 100%;
+        }
+        :root[data-theme="light"] .tools-card select, :root[data-theme="light"] .file-toolbar select, :root[data-theme="light"] .logcat-controls select,
+        :root[data-theme="light"] #triagePerm, :root[data-theme="light"] .tools-field select { color-scheme: light; border-color: rgba(0,0,0,0.15); }
+        .tools-card .text-input, .tools-field .text-input { background: var(--depth-4); color: var(--lum-90); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 13px; }
+        :root[data-theme="light"] .tools-card .text-input, :root[data-theme="light"] .tools-field .text-input { border-color: rgba(0,0,0,0.15); }
+        .file-toolbar .search-input { padding-left: 14px; }
+        .badge { white-space: nowrap; }
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
         }

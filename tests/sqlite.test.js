@@ -86,6 +86,11 @@ test('WITHOUT ROWID tables are reported, not misread', { skip: !py }, () => {
     assert.equal(db.count('kv'), null);
 });
 
+test('journal mode is detected from the header (only WAL databases can have unmerged rows)', { skip: !py }, () => {
+    assert.equal(open('basic.db').isWal, false);
+    assert.equal(open('wal-main.db').isWal, true);
+});
+
 test('WAL overlay: rows that only exist in the -wal file are visible', { skip: !py }, () => {
     const without = open('wal-main.db');
     const withWal = open('wal-main.db', 'wal-main.db-wal');

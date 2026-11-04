@@ -21,6 +21,7 @@
             this.pageSize = ps === 1 ? 65536 : ps;
             this.reserved = bytes[20];
             this.usable = this.pageSize - this.reserved;
+            this.isWal = bytes[18] === 2 && bytes[19] === 2;        // file-format version 2 = journal_mode=WAL
             this.encoding = this.view.getUint32(56);                // 1 UTF-8, 2 UTF-16le, 3 UTF-16be
             this.pageCount = Math.floor(bytes.length / this.pageSize);
             this.overlay = new Map();

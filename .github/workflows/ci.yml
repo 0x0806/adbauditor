@@ -15,3 +15,5 @@ jobs:
       - run: npm test
       - name: End-to-end (headless Chrome, fake WebUSB device)
         run: npm run test:e2e
+      - name: Site check (local static server, headless Chrome)
+        run: node scripts/site-check.js --serve
