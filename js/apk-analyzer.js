@@ -22,6 +22,13 @@
         }
 
         _parse() {
+            try { this._parseUnsafe(); } catch (e) {
+                if (e && e.name === 'RangeError') throw new Error('Corrupt ZIP structure');
+                throw e;
+            }
+        }
+
+        _parseUnsafe() {
             const v = this.view, len = this.bytes.length;
             let eocd = -1;
             for (let i = len - 22; i >= Math.max(0, len - 22 - 65535); i--) {
@@ -54,9 +61,10 @@
             const e = this.entries.get(name);
             if (!e) throw new Error('No such entry: ' + name);
             const v = this.view, o = e.localOffset;
-            if (v.getUint32(o, true) !== 0x04034b50) throw new Error('Corrupt local header for ' + name);
+            if (o + 30 > this.bytes.length || v.getUint32(o, true) !== 0x04034b50) throw new Error('Corrupt local header for ' + name);
             // the local header carries its own name/extra lengths, which may differ from the central directory's
             const start = o + 30 + v.getUint16(o + 26, true) + v.getUint16(o + 28, true);
+            if (start + e.compressedSize > this.bytes.length) throw new Error('Truncated entry: ' + name);
             const raw = this.bytes.subarray(start, start + e.compressedSize);
             if (e.method === 0) return raw;
             if (e.method !== 8) throw new Error(`Unsupported compression method ${e.method} for ${name}`);
@@ -115,6 +123,13 @@
 
     /** Decode a binary XML document to { name, attrs, children }. attrs[name] = { value, type, ref }. */
     function decodeAxml(bytes) {
+        try { return decodeAxmlUnsafe(bytes); } catch (e) {
+            if (e && e.name === 'RangeError') throw new Error('Corrupt binary XML: ' + e.message);
+            throw e;
+        }
+    }
+
+    function decodeAxmlUnsafe(bytes) {
         const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         if (view.getUint16(0, true) !== 0x0003) throw new Error('Not a binary XML document');
         const total = Math.min(view.getUint32(4, true), bytes.length);
@@ -246,6 +261,13 @@
     /* ---------- DEX ---------- */
 
     function readDexStrings(dex, limit = 400000) {
+        try { return readDexStringsUnsafe(dex, limit); } catch (e) {
+            if (e && e.name === 'RangeError') throw new Error('Corrupt DEX file: ' + e.message);
+            throw e;
+        }
+    }
+
+    function readDexStringsUnsafe(dex, limit) {
         const v = new DataView(dex.buffer, dex.byteOffset, dex.byteLength);
         if (dex.length < 0x70 || dex[0] !== 0x64 || dex[1] !== 0x65 || dex[2] !== 0x78) throw new Error('Not a DEX file');
         const count = Math.min(v.getUint32(0x38, true), limit), idsOff = v.getUint32(0x3c, true);
@@ -411,6 +433,7 @@
         let p = centralOffset - size - 8 + 8;                              // start of first pair (after leading size field)
         const end = centralOffset - 24;
         res.present = true;
+        try {
         while (p + 12 <= end) {
             const pairLen = Number(v.getBigUint64(p, true));
             const id = v.getUint32(p + 8, true);
@@ -433,6 +456,7 @@
             p = valEnd;
             if (pairLen <= 0) break;
         }
+        } catch (e) { res.error = e.message; }     // keep whatever was parsed before the damage
         return res;
     }
 
@@ -485,7 +509,9 @@
         for (const n of names.filter(n => /^META-INF\/[^/]+\.(RSA|DSA|EC)$/i.test(n))) {
             try { certDer.push(...certsFromPkcs7(await zip.read(n))); } catch (e) { sig.notes.push(`${n}: ${e.message}`); }
         }
-        const block = parseSigningBlock(bytes, zip.centralOffset);
+        let block = { present: false, schemes: [], certs: [] };
+        try { block = parseSigningBlock(bytes, zip.centralOffset); } catch (e) { sig.notes.push('Signing block: ' + e.message); }
+        if (block.error) sig.notes.push('Signing block is damaged after the entries listed: ' + block.error);
         sig.schemes = [...(sig.v1 ? [1] : []), ...block.schemes];
         certDer.push(...block.certs);
         const seen = new Set();

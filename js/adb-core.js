@@ -315,6 +315,11 @@
     }
 
 
+    /** Stable identifier for a USB device (some devices report no serial number). */
+    function usbSerial(usbDevice) {
+        return usbDevice.serialNumber || `usb-${usbDevice.vendorId}-${usbDevice.productId}`;
+    }
+
     class DeviceDescriptor {
         constructor(type, serial, name) {
             this.type = type;
@@ -339,7 +344,7 @@
 
     class USBDeviceDescriptor extends DeviceDescriptor {
         constructor(usbDevice) {
-            super('usb', usbDevice.serialNumber, usbDevice.productName);
+            super('usb', usbSerial(usbDevice), usbDevice.productName);
             this.usbDevice = usbDevice;
         }
 
@@ -401,19 +406,23 @@
         startWatching() {
             if (this.watcher) return;
             
-            this.watcher = new USBWatcher((event, usbDevice) => {
+            this.watcher = new USBWatcher(async (event, usbDevice) => {
                 if (event === 'connect') {
                     const descriptor = new USBDeviceDescriptor(usbDevice);
                     this.devices.set(descriptor.serial, descriptor);
                     this.emit('deviceAdded', descriptor);
                     this.emit('devicesChanged', this.getDeviceList());
                 } else if (event === 'disconnect') {
-                    const serial = usbDevice.serialNumber;
+                    const serial = usbSerial(usbDevice);
                     if (this.activeDevice?.serial === serial) {
                         this.emit('activeDeviceDisconnected', this.activeDevice);
                         this.activeDevice = null;
                         this.activeConnection = null;
                     }
+                    // two identical devices without serial numbers share a key: only drop it when none is left
+                    const remaining = navigator.usb ? await navigator.usb.getDevices().catch(() => []) : [];
+                    if (remaining.some(d => usbSerial(d) === serial)) { this.emit('devicesChanged', this.getDeviceList()); return; }
+                    this.devices.delete(serial);        // previously the unplugged device stayed in the list
                     this.emit('deviceRemoved', { serial });
                     this.emit('devicesChanged', this.getDeviceList());
                 }
@@ -436,10 +445,7 @@
                 
                 for (const [serial, descriptor] of this.devices) {
                     if (descriptor.type === 'usb') {
-                        const stillPresent = usbDevices.some(d => 
-                            d.serialNumber === serial || 
-                            (!d.serialNumber && !serial)
-                        );
+                        const stillPresent = usbDevices.some(d => usbSerial(d) === serial);
                         if (!stillPresent) {
                             this.devices.delete(serial);
                             log('Removed disconnected USB device:', serial);
@@ -449,11 +455,8 @@
                 
                 const descriptors = [];
                 for (const usbDevice of usbDevices) {
-                    const serial = usbDevice.serialNumber || 
-                        `usb-${usbDevice.vendorId}-${usbDevice.productId}`;
-                    
                     const descriptor = new USBDeviceDescriptor(usbDevice);
-                    descriptor.serial = serial;
+                    const serial = descriptor.serial;
                     this.devices.set(serial, descriptor);
                     descriptors.push(descriptor);
                     log('Updated USB device:', serial, '- Product:', usbDevice.productName);
@@ -568,8 +571,12 @@
                 }
             }
             
-            localStorage.setItem('adb-devices', JSON.stringify(toSave));
-            log('Saved devices to localStorage');
+            try {
+                localStorage.setItem('adb-devices', JSON.stringify(toSave));
+                log('Saved devices to localStorage');
+            } catch (e) {
+                logError('Could not save devices (storage unavailable):', e);
+            }
         }
 
         loadSavedDevices() {
@@ -1234,7 +1241,7 @@
                 const i = line.indexOf('=');
                 if (i > 0) parsed[line.slice(0, i)] = line.slice(i + 1).trim();
             }
-            for (const k of Object.keys(keys)) props[k] = parsed[k] || (k === 'serial' ? (this.device?.serialNumber || 'Unknown') : 'Unknown');
+            for (const k of Object.keys(keys)) props[k] = parsed[k] || (k === 'serial' ? (this.device ? usbSerial(this.device) : 'Unknown') : 'Unknown');
             try {
                 const bat = await this.shell('dumpsys battery');
                 const m = bat.match(/level:\s*(\d+)/);
@@ -1309,7 +1316,7 @@
         getDeviceInfo() {
             if (!this.device) return null;
             return {
-                serial: this.device.serialNumber,
+                serial: usbSerial(this.device),
                 name: this.device.productName,
                 manufacturer: this.device.manufacturerName,
                 connected: this.isConnected(),
@@ -1509,6 +1516,7 @@
     global.ADBErrorType = ErrorType;
     global.DeviceManager = DeviceManager;
     global.USBWatcher = USBWatcher;
+    global.usbSerial = usbSerial;
     global.ADBInternals = { makePacket, parseHeader, signAdbToken, generatePublicKey, parsePkcs8Rsa, pkcs1Sha1Block, bytesToBigInt, modPow, ADB };
     global.USBDeviceDescriptor = USBDeviceDescriptor;
     global.WebSocketDeviceDescriptor = WebSocketDeviceDescriptor;

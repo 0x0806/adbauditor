@@ -27,6 +27,14 @@ con.execute('alter table users add column extra text')       # rows written befo
 con.commit(); con.close()
 con = sqlite3.connect(p); expected['basic.db'] = {'users': rows(con, 'users'), 'odd name': rows(con, 'odd name')}; con.close()
 
+# 1b. 64-bit and negative rowids (stored as 9-byte varints)
+con = sqlite3.connect(os.path.join(out, 'rowids.db'))
+con.execute('create table ids(id integer primary key, v text)')
+con.executemany('insert into ids(id,v) values(?,?)', [(-1, 'neg1'), (-2**40, 'negbig'), (5, 'five'), (2**60, 'huge'), (2**62 + 7, 'huger'), (-2**62, 'minish')])
+con.commit()
+expected['rowids.db'] = [[str(r[0]), r[1]] for r in con.execute('select id, v from ids order by id')]
+con.close()
+
 # 2. overflow pages (1 KiB pages, big text/blob) + interior pages (many rows)
 p = os.path.join(out, 'big.db')
 con = sqlite3.connect(p)

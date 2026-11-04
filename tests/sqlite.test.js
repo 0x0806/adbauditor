@@ -43,6 +43,12 @@ test('basic.db: schema, every serial type, NULLs, ALTER TABLE columns, rowid ali
     assert.equal(db.count('users'), 12);
 });
 
+test('rowids.db: negative and >2^53 rowids are exact (9-byte varints)', { skip: !py }, () => {
+    const db = open('rowids.db');
+    const rows = db.rows('ids').rows.map(r => [String(r[0]), r[1]]).sort((a, b) => (BigInt(a[0]) < BigInt(b[0]) ? -1 : 1));
+    assert.deepEqual(JSON.parse(JSON.stringify(rows)), expected['rowids.db']);
+});
+
 test('big.db: overflow pages and multi-level b-tree match sqlite exactly', { skip: !py }, () => {
     const db = open('big.db');
     assert.equal(db.pageSize, expected['big.db'].page_size);

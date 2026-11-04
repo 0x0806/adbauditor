@@ -1,9 +1,30 @@
 # Changelog
 
+## 2.1.1 - bug-fix release by 0x0806
+
+Found with mutation fuzzing of every parser, a concurrency stress test, adversarial end-to-end scenarios and an independent code review. Each fix has a regression test.
+
+### Fixed
+- **SQLite reader hung (29 s) on a corrupted record header** claiming an enormous length; now rejected instantly.
+- SQLite reader threw raw `TypeError`/`RangeError` (BigInt mixing, reads past the end of a page) on damaged files; now a clear "Corrupt database" error. Cyclic b-tree pages and looping overflow chains are detected.
+- SQLite rowids: negative rowids were decoded wrongly (`-1` showed as `255`) and rowids above 2^53 lost precision. 64-bit varints are now exact.
+- APK analyzer: corrupted ZIP, binary-manifest and DEX data produced raw `RangeError`s; they are now clean errors. A damaged APK Signing Block no longer aborts the whole analysis and keeps whatever was parsed before the damage.
+- **Unplugged USB devices stayed in the device list forever**; the device manager never removed them on disconnect.
+- Devices without a serial number were keyed inconsistently (`undefined` vs a fallback id), so they duplicated and their disconnect events never matched. Two identical serial-less devices no longer make each other vanish. `getDeviceInfo()` and device properties use the same id.
+- Saving the device list threw when browser storage was unavailable.
+- **A failed connection left the USB interface claimed**, so the next attempt could fail with "device in use"; a double-click on Connect started two connections. Both fixed.
+- Directory listings on Android 5-6 (no link-count column, no size for directories) were dropped or misparsed.
+- Toast de-duplication skipped items while removing from a live collection.
+- Service worker tried to cache partial (206) responses and logged errors.
+
+### Tests
+- New: mutation-fuzz suite (APK/ZIP, binary XML, DEX, SQLite, inner-file corruption), device-manager tests, deterministic concurrency stress test (no leaked socket queues), 64-bit rowid fixtures, older-Android `ls` formats.
+- End-to-end test now also covers hostile content on every new screen (APK package/component names, DB table names and cells, settings values, activity log), file rename/delete/mkdir command quoting, shell `cd`/completion, and recovery after a failed connect.
+
 ## 2.1.0 - more enhancements by 0x0806
 
 Items continue the numbering of 2.0.0. Everything listed is implemented and covered by `npm test`
-(114 unit tests) and/or `npm run test:e2e` (headless Chromium, fake WebUSB device). Features marked
+(131 unit tests) and/or `npm run test:e2e` (headless Chromium, fake WebUSB device). Features marked
 *(heuristic)* pattern-match strings and can produce false positives/negatives. Protocol and device
 control code is verified against mock devices, not physical hardware.
 
@@ -78,7 +99,7 @@ Every value is validated and single-quoted; state-changing actions ask for confi
 135. Fixed 13 CSS design tokens that were referenced but never defined (`--danger`, `--success`, `--warning`, `--primary`, `--surface-2`, `--lum-40`...), which left several colours and the progress bars unstyled.
 
 ### Engineering
-- Test suite grew from 61 to 114 unit tests plus an expanded end-to-end run; test fixtures are generated (a binary-manifest/DEX/ZIP builder validated with `aapt`, Python-generated SQLite databases, OpenSSL certificates). Real-APK smoke tests are opt-in via `ADBAUD_APK_DIR`.
+- Test suite grew from 61 to 131 unit tests plus an expanded end-to-end run; test fixtures are generated (a binary-manifest/DEX/ZIP builder validated with `aapt`, Python-generated SQLite databases, OpenSSL certificates). Real-APK smoke tests are opt-in via `ADBAUD_APK_DIR`.
 - Fixed CI on Node 22 (explicit test glob).
 - Service worker cache bumped and new modules precached.
 

@@ -204,7 +204,7 @@ adbauditor/
 
 ```bash
 npm run lint       # syntax check
-npm test           # 114 unit tests (mock ADB device, auditor, APK analyzer, SQLite, toolkit)
+npm test           # 131 unit tests (mock ADB device, auditor, APK analyzer, SQLite, toolkit)
 npm run test:e2e   # headless Chromium with a fake WebUSB device
 ```
 

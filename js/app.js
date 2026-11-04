@@ -806,8 +806,8 @@
         };
         const text = String(message);
         // collapse identical toasts instead of stacking them
-        for (const t of el.toastContainer.children) {
-            if (t.dataset.msg === text) { t.remove(); }
+        for (const t of Array.from(el.toastContainer.children)) {      // copy: removing while iterating a live collection skips items
+            if (t.dataset.msg === text) t.remove();
         }
         while (el.toastContainer.children.length >= 5) el.toastContainer.firstChild.remove();
         const toast = document.createElement('div');
@@ -1282,7 +1282,10 @@
                 showToast('Device disconnected', 'warning');
             }
         },
+        _connecting: false,
         async connect() {
+            if (this._connecting || state.connected) return;      // ignore double clicks
+            this._connecting = true;
             try {
                 showLoading('Connecting...', 'Checking for paired devices...');
                 if (typeof ADBConnection === 'undefined') {
@@ -1321,18 +1324,18 @@
                 } else {
                     showLoading('Waiting...', 'Select device from browser dialog');
                     await adb.connect();
-                    if (deviceManager && adb.device?.serialNumber) {
+                    if (deviceManager && adb.device) {
                         await deviceManager.refreshUSBDevices();
                         this.updateDeviceList(deviceManager.getDeviceList());
-                        state.selectedDeviceSerial = adb.device.serialNumber;
-                        if (el.deviceSelect) el.deviceSelect.value = adb.device.serialNumber;
+                        state.selectedDeviceSerial = window.usbSerial(adb.device);
+                        if (el.deviceSelect) el.deviceSelect.value = state.selectedDeviceSerial;
                     }
                 }
                 state.connected = true;
                 activity.add('connect', [adb.device?.productName, adb.device?.serialNumber].filter(Boolean).join(' '));
                 setAmbientActive(true);
-                if (adb.device?.serialNumber) {
-                    state.selectedDeviceSerial = adb.device.serialNumber;
+                if (adb.device) {
+                    state.selectedDeviceSerial = window.usbSerial(adb.device);
                 }
                 el.connectBtn.classList.add('hidden');
                 el.disconnectBtn.classList.remove('hidden');
@@ -1350,8 +1353,12 @@
                 navigate('overview');
             } catch (e) {
                 hideLoading();
-                showToast('Connection failed: ' + e.message, 'error');
+                // release the USB interface so the next attempt does not fail with "already in use"
+                if (adb) { try { await adb.disconnect(); } catch (err) { /* ignore */ } }
+                showToast('Connection failed: ' + (e.getUserMessage ? e.getUserMessage() : e.message), 'error');
                 console.error('Connection error:', e);
+            } finally {
+                this._connecting = false;
             }
         },
         async disconnect() {

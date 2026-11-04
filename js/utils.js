@@ -104,6 +104,8 @@
     /* ---------- `ls -l` parsing ---------- */
 
     const LS_RE_ISO = /^([-dlbcps][-rwxsStT?]{9})[.+@]?\s+(\d+)\s+(\S+)\s+(\S+)\s+(?:(\d+),\s*)?(\d+)\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})(?::\d{2})?(?:\.\d+)?(?:\s+[+-]\d{4})?\s+(.+)$/;
+    // Android 5-6 (toolbox): no link-count column, e.g. "-rw-rw---- root sdcard_rw 1234 2016-03-04 11:30 name"
+    const LS_RE_NOLINK = /^([-dlbcps][-rwxsStT?]{9})[.+@]?\s+(\S+)\s+(\S+)\s+(?:(\d+),\s*)?(?:(\d+)\s+)?(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})(?::\d{2})?\s+(.+)$/;
     const LS_RE_OLD = /^([-dlbcps][-rwxsStT?]{9})[.+@]?\s+(\S+)\s+(\S+)\s+(?:(\d+),\s*)?(\d+)\s+([A-Za-z]{3}\s+\d{1,2}\s+(?:\d{4}|\d{1,2}:\d{2}))\s+(.+)$/;
 
     /** Parse one line of `ls -la` output. Returns null for non-entry lines. */
@@ -115,6 +117,13 @@
         if (m) {
             [, perms, , owner, group, , size, date, , rest] = m;
             date = date + ' ' + m[8];
+        } else if ((m = LS_RE_NOLINK.exec(text))) {
+            [, perms, owner, group, , size, date, , rest] = m;
+            date = date + ' ' + m[7];
+            if (size === undefined) {                // toolbox prints no size for directories and symlinks only
+                if (perms[0] !== 'd' && perms[0] !== 'l') return null;
+                size = '0';
+            }
         } else if ((m = LS_RE_OLD.exec(text))) {
             [, perms, owner, group, , size, date, rest] = m;
         } else {

@@ -151,3 +151,12 @@ test('HTML export escapes content; Markdown contains credits', () => {
     assert.match(md, /0x0806/);
     assert.match(md, /Sandeep Wawdane/);
 });
+
+test('parseLsLine understands Android 5-6 listings without a link-count column', () => {
+    const e = plain(U.parseLsLine('-rw-rw---- root sdcard_rw 1234 2016-03-04 11:30 my file.txt'));
+    assert.deepEqual([e.name, e.size, e.owner, e.isDir], ['my file.txt', 1234, 'root', false]);
+    const d = plain(U.parseLsLine('drwxrwx--x root sdcard_rw 2016-03-04 11:30 Android'));
+    assert.deepEqual([d.name, d.isDir, d.size, d.owner], ['Android', true, 0, 'root']);   // toolbox prints no size for directories
+    assert.equal(plain(U.parseLsLine('lrwxrwxrwx root root 2016-03-04 11:30 sdcard -> /storage/emulated/legacy')).target, '/storage/emulated/legacy');
+    assert.equal(U.parseLsLine('-rw-rw---- root sdcard_rw 2016-03-04 11:30 file-without-size'), null, 'a regular file always has a size');
+});

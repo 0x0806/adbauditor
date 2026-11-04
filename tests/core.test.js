@@ -244,3 +244,24 @@ test('raw token signature verifies against the RSA public key', async () => {
     const { n, e } = I.parsePkcs8Rsa(pkcs8);
     assert.equal(I.modPow(I.bytesToBigInt(sig), e, n), I.bytesToBigInt(I.pkcs1Sha1Block(token, 256)));
 });
+
+test('stress: many mixed concurrent operations with random USB chunking stay consistent', async () => {
+    let seed = 20240607;
+    const file = Uint8Array.from({ length: 150000 }, (_, i) => (i * 13) & 255);
+    const { adb, dev } = await connect({
+        outChunk: 37, maxdata: 4096, files: { '/sdcard/f.bin': file },
+        shell: async cmd => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; await new Promise(r => setTimeout(r, (seed % 1000) / 100)); return cmd.repeat(300); }   // seeded: reproducible
+    });
+    const jobs = [];
+    for (let i = 0; i < 12; i++) jobs.push(adb.shell('c' + i).then(r => assert.equal(r, ('c' + i).repeat(300))));
+    for (let i = 0; i < 3; i++) jobs.push(adb.pullFile('/sdcard/f.bin').then(r => assert.equal(Buffer.compare(Buffer.from(r), Buffer.from(file)), 0)));
+    for (let i = 0; i < 3; i++) {
+        const data = Uint8Array.from({ length: 40000 }, (_, k) => (k + i) & 255);
+        jobs.push(adb.pushFile('/sdcard/up' + i + '.bin', data).then(() => assert.equal(Buffer.compare(Buffer.from(dev.pushed['/sdcard/up' + i + '.bin']), Buffer.from(data)), 0)));
+    }
+    const stream = await adb.streamShell('logcat', () => {});
+    await Promise.all(jobs);
+    await stream.stop();
+    assert.equal(await adb.shell('after'), 'after'.repeat(300));
+    assert.equal(adb.pendingPackets.size, 0, 'no leaked socket queues');
+});

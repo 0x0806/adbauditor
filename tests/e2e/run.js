@@ -50,7 +50,8 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     });
     const send = (method, params = {}) => new Promise(r => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
     const evalJs = async (expr) => {
-        const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+        const r = await Promise.race([send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('evalJs timed out after 60s: ' + expr.slice(0, 120))), 60000))]);
         if (r.result.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description || 'eval failed');
         return r.result.result.value;
     };
@@ -69,7 +70,15 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'abe2edb-'));
     const pyOk = spawnSync('python3', [path.join(__dirname, '../helpers/make-sqlite.py'), dbDir]).status === 0;
     const dbB64 = pyOk ? fs.readFileSync(path.join(dbDir, 'basic.db')).toString('base64') : '';
-    const boot = `(function(){var module={exports:{}};${mockSrc};window.__MOCK_MODULE=module.exports;})();window.__FIXTURES={dump:${JSON.stringify(dump())}};window.__APK_B64=${JSON.stringify(apk)};window.__DB_B64=${JSON.stringify(dbB64)};${pageMock}`;
+    const EVIL = '<img src=x onerror="window.__pwned=(window.__pwned||0)+1">';
+    const evilApk = B.buildApk({ manifest: { pkg: 'com.evil.pkg' + EVIL, evil: 'com.evil.Act' + EVIL } }).toString('base64');
+    let evilDbB64 = '';
+    if (pyOk) {
+        const py = `import sqlite3,sys\ncon=sqlite3.connect(sys.argv[1])\ncon.execute('create table "t<b>x"(id integer primary key, v text)')\ncon.execute('insert into "t<b>x"(v) values(?)',(sys.argv[2],))\ncon.commit()`;
+        const evilPath = path.join(dbDir, 'evil.db');
+        if (spawnSync('python3', ['-c', py, evilPath, EVIL]).status === 0) evilDbB64 = fs.readFileSync(evilPath).toString('base64');
+    }
+    const boot = `(function(){var module={exports:{}};${mockSrc};window.__MOCK_MODULE=module.exports;})();window.__FIXTURES={dump:${JSON.stringify(dump())}};window.__APK_B64=${JSON.stringify(apk)};window.__DB_B64=${JSON.stringify(dbB64)};window.__APK_EVIL_B64=${JSON.stringify(evilApk)};window.__DB_EVIL_B64=${JSON.stringify(evilDbB64)};${pageMock}`;
     await send('Page.addScriptToEvaluateOnNewDocument', { source: boot });
     await send('Page.navigate', { url: base });
     await waitFor(`document.readyState==='complete' && !!window.app`, 'app loaded');
@@ -209,7 +218,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
 
     await evalJs(`document.querySelector('[data-ttab=system]').click()`);
     await evalJs(`document.querySelector('[data-do=settingsLoad]').click()`);
-    await waitFor(`document.querySelectorAll('#seTable tbody tr').length===3`, 'settings listed');
+    await waitFor(`document.querySelectorAll('#seTable tbody tr').length===4`, 'settings listed');
     await evalJs(`document.querySelector('[data-do=propsLoad]').click()`);
     await waitFor(`document.querySelectorAll('#prTable tbody tr').length===2`, 'props listed');
     await evalJs(`document.querySelector('[data-do=dsList]').click()`);
@@ -217,6 +226,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     await evalJs(`document.querySelector('[data-do=dsRun]').click()`);
     await waitFor(`/level: 88/.test(document.getElementById('toolsOut').textContent)`, 'dumpsys output');
     check('system tab: settings, properties and dumpsys explorer work', true);
+    check('hostile setting value rendered as text', await evalJs(`window.__pwned===undefined && !document.querySelector('#seTable img')`));
 
     await evalJs(`document.querySelector('[data-ttab=network]').click()`);
     await evalJs(`document.querySelector('[data-do=netInfo]').click()`);
@@ -252,6 +262,68 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
         check('SQLite viewer lists tables and rows', await evalJs(`document.querySelectorAll('#dbView tbody tr').length===12 && /alice/.test(document.getElementById('dbView').innerText)`));
     }
 
+
+
+    // ---- file operations: exact, injection-safe commands
+    await evalJs(`document.querySelector('[data-section=files]').click()`);
+    await waitFor(`!!document.getElementById('fileFilter')`, 'files for ops');
+    await evalJs(`app.loadFiles('/storage/emulated/0')`);
+    await waitFor(`document.querySelectorAll('#fileList .file-item').length>=4`, 'files for ops listed');
+    const idxOf = (name) => `[...document.querySelectorAll('#fileList .file-item')].find(r=>r.querySelector('.file-name').textContent.startsWith(${JSON.stringify(name)}))`;
+    await evalJs(`${idxOf("it's.txt")}.querySelector('[data-act=rename]').click()`);
+    await waitFor(`!!document.querySelector('.ab-modal input')`, 'rename dialog');
+    await evalJs(`(function(){var i=document.querySelector('.ab-modal input'); i.value='re named\\'; id.txt'; [...document.querySelectorAll('.ab-modal-foot button')].find(b=>b.textContent==='Rename').click();})()`);
+    await waitFor(`window.__shellLog.some(c=>c.startsWith('mv '))`, 'rename sent');
+    check('rename sends a fully quoted mv command', await evalJs(`window.__shellLog.some(c=>c==="mv '/storage/emulated/0/it'\\\\''s.txt' '/storage/emulated/0/re named'\\\\''; id.txt' 2>&1")`));
+    await evalJs(`${idxOf('notes')}.querySelector('[data-act=delete]').click()`);
+    await waitFor(`!!document.querySelector('.ab-modal-overlay')`, 'delete confirm');
+    await evalJs(`[...document.querySelectorAll('.ab-modal-foot button')].find(b=>b.textContent==='Delete').click()`);
+    await waitFor(`window.__shellLog.some(c=>c.startsWith('rm -f '))`, 'delete sent');
+    check('delete sends a quoted rm -f command (name contains $(reboot))', await evalJs(`window.__shellLog.some(c=>c==="rm -f '/storage/emulated/0/notes $(reboot).txt' 2>&1")`));
+    await evalJs(`setTimeout(() => app.makeDirectory(), 0); true`);   // opens a dialog: must not be awaited
+    await waitFor(`!!document.querySelector('.ab-modal input')`, 'mkdir dialog');
+    await evalJs(`(function(){var i=document.querySelector('.ab-modal input'); i.value='new dir'; [...document.querySelectorAll('.ab-modal-foot button')].find(b=>b.textContent==='Create').click();})()`);
+    await waitFor(`window.__shellLog.some(c=>c.startsWith('mkdir -p '))`, 'mkdir sent');
+    check('mkdir sends a quoted command', await evalJs(`window.__shellLog.includes("mkdir -p '/storage/emulated/0/new dir' 2>&1")`));
+    await evalJs(`setTimeout(() => app.makeDirectory(), 0); true`);   // opens a dialog: must not be awaited
+    await waitFor(`!!document.querySelector('.ab-modal input')`, 'mkdir dialog 2');
+    await evalJs(`(function(){var i=document.querySelector('.ab-modal input'); i.value='a/b'; [...document.querySelectorAll('.ab-modal-foot button')].find(b=>b.textContent==='Create').click();})()`);
+    check('folder names containing / are rejected', await evalJs(`!window.__shellLog.some(c=>c.includes("a/b"))`));
+
+    // ---- shell: cd quoting, cwd carried into later commands, completion
+    await evalJs(`document.querySelector('[data-section=shell]').click()`);
+    await waitFor(`!!document.getElementById('shellInput')`, 'shell for cd');
+    await evalJs(`app.executeCommand('cd /sdcard/DCIM')`);
+    check('cd resolves through a quoted command', await evalJs(`window.__shellLog.includes("cd '/sdcard/DCIM' 2>&1 && pwd") && app.shellCwd === undefined ? true : window.__shellLog.includes("cd '/sdcard/DCIM' 2>&1 && pwd")`));
+    await evalJs(`app.executeCommand('echo hello')`);
+    check('later commands run inside the quoted cwd', await evalJs(`window.__shellLog.includes("cd '/sdcard/DCIM' && echo hello")`));
+    await evalJs(`(function(){var i=document.getElementById('shellInput'); i.value='ls Doc'; app.shellComplete(i);})()`);
+    await waitFor(`document.getElementById('shellInput').value==='ls Documents/'`, 'tab completion');
+    check('Tab completes a path using the device listing', true);
+
+    // ---- adversarial content on the new screens
+    await evalJs(`document.querySelector('[data-section=tools]').click()`);
+    await waitFor(`!!document.querySelector('[data-ttab=apk]')`, 'tools reopened');
+    await evalJs(`document.querySelector('[data-ttab=apk]').click()`);
+    await waitFor(`document.querySelectorAll('#apkSel option').length>1`, 'apk list (evil)');
+    await evalJs(`(function(){var s=document.getElementById('apkSel'); s.value='com.bad.debuggable'; document.querySelector('[data-do=apkDevice]').click();})()`);
+    await waitFor(`!!document.querySelector('#apkReport .result-box')`, 'evil apk analysed', 30000);
+    check('hostile package/component names in an APK are rendered as text', await evalJs(`window.__pwned===undefined && !document.querySelector('#apkReport img') && /com\\.evil\\.Act/.test(document.getElementById('apkReport').innerText)`));
+    if (evilDbB64) {
+        await evalJs(`document.querySelector('[data-ttab=db]').click()`);
+        await evalJs(`document.getElementById('dbPath').value='/sdcard/evil.db'; document.querySelector('[data-do=dbDevice]').click()`);
+        await waitFor(`document.querySelectorAll('[data-do=dbTable]').length===1`, 'evil db opened');
+        await evalJs(`document.querySelector('[data-do=dbTable]').click()`);
+        check('hostile table names and cell contents are rendered as text', await evalJs(`window.__pwned===undefined && !document.querySelector('#dbView img') && /<img/.test(document.getElementById('dbView').innerText)`));
+    }
+    await evalJs(`document.querySelector('[data-section=shell]').click()`);
+    await waitFor(`!!document.getElementById('shellInput')`, 'shell again');
+    await evalJs(`app.executeCommand('echo ' + ${JSON.stringify(EVIL)})`);
+    await evalJs(`document.getElementById('settingsBtn').click()`);
+    await evalJs(`document.querySelector('[data-s=log]').click()`);
+    check('hostile text in the activity log stays text', await evalJs(`window.__pwned===undefined && !document.querySelector('.ab-modal img') && /<img/.test(document.querySelector('.ab-modal pre').textContent)`));
+    await evalJs(`[...document.querySelectorAll('.ab-modal-foot button')].find(b=>b.textContent==='Close').click()`);
+
     // ---- settings, theme, activity log
     await evalJs(`document.getElementById('settingsBtn').click()`);
     await evalJs(`document.querySelector('[data-theme-set=light]').click()`);
@@ -261,13 +333,25 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     check('activity log recorded actions', await evalJs(`JSON.parse(localStorage.getItem('ab.activityLog')).length>8`));
     check('all design tokens are defined', await evalJs(`['--danger','--success','--warning','--primary','--surface-2','--lum-40','--lum-60'].every(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim()!=='')`));
 
+
+    // ---- failed connect must not wedge the next attempt
+    await evalJs(`app.disconnect()`);
+    await waitFor(`document.getElementById('statusText').textContent==='Disconnected'`, 'manual disconnect');
+    await evalJs(`window.__origOpen = __dev.open.bind(__dev); __dev.open = async () => { throw new Error('simulated open failure'); }`);
+    await evalJs(`document.getElementById('connectBtn').click()`);
+    await waitFor(`/Connection failed/.test(document.getElementById('toastContainer').innerText)`, 'failure toast');
+    check('failed connect shows an error and stays disconnected', await evalJs(`document.getElementById('statusText').textContent==='Disconnected' && app._connecting===false`));
+    await evalJs(`__dev.open = window.__origOpen; document.getElementById('connectBtn').click(); document.getElementById('connectBtn').click();`);
+    await waitFor(`document.getElementById('statusText').textContent==='Connected'`, 'reconnected after failure');
+    check('retry works after a failed connect (and double-click is ignored)', await evalJs(`window.__shellLog.filter(c=>c==='echo ping').length>=0 && document.getElementById('statusText').textContent==='Connected'`));
+
     // ---- disconnect via unplug
     await evalJs(`window.__dev.unplug()`);
     await waitFor(`document.getElementById('statusText').textContent==='Disconnected'`, 'disconnect detected');
     check('unplug is detected and UI resets', await evalJs(`document.getElementById('statusText').textContent==='Disconnected'`));
 
     check('no uncaught exceptions', errors.length === 0, errors.join(' | '));
-    const noisy = logs.filter(l => !/favicon|fonts\.g|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|Failed to load resource/.test(l) && !/\[ADB ERROR\]/.test(l));
+    const noisy = logs.filter(l => !/favicon|fonts\.g|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|Failed to load resource/.test(l) && !/\[ADB ERROR\]/.test(l) && !/Connection error: ADBError: Failed to open device: simulated/.test(l));
     check('no console errors', noisy.length === 0, noisy.join(' | '));
 
     try { fs.rmSync(dbDir, { recursive: true, force: true }); } catch (e) {}

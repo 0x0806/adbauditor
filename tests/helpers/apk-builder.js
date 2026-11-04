@@ -101,11 +101,11 @@ function sampleManifest(overrides = {}) {
             el('receiver', [['name', 'com.example.Boot']], [el('intent-filter', [], [el('action', [['name', 'android.intent.action.BOOT_COMPLETED']])])]),
             el('provider', [['name', 'com.example.Data'], ['authorities', 'com.example.data'], ['exported', true], ['grantUriPermissions', true]]),
             el('provider', [['name', 'com.example.Private'], ['authorities', 'com.example.priv'], ['exported', false]])
-        ])
+        ].concat(o.evil ? [el('activity', [['name', o.evil], ['exported', true]])] : []))
     ]);
 }
 // the manifest root also needs a "package" attribute (no namespace, string) - added by name
-function manifestRoot(o) { const m = sampleManifest(o); m.attrs.push(['package', 'com.example.app']); return m; }
+function manifestRoot(o) { const m = sampleManifest(o); m.attrs.push(['package', (o && o.pkg) || 'com.example.app']); return m; }
 
 /** Minimal DEX with the given strings in its string_ids table. */
 function buildDex(strings) {

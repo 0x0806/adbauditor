@@ -59,12 +59,30 @@
             return this.bytes.subarray(start, start + this.pageSize);
         }
 
+        /**
+         * Decode an SQLite varint. Returns a Number when the value is a safe integer, otherwise a BigInt (signed 64-bit,
+         * exactly as stored - negative rowids use the 9-byte form). Callers that expect sizes reject non-Numbers.
+         */
         static _varint(buf, p) {
-            let v = 0n;
-            for (let i = 0; i < 8; i++) { const b = buf[p + i]; v = (v << 7n) | BigInt(b & 0x7f); if (!(b & 0x80)) return [Number(v), p + i + 1]; }
-            v = (v << 8n) | BigInt(buf[p + 8]);
-            return [v > BigInt(Number.MAX_SAFE_INTEGER) ? v : Number(v), p + 9];
+            if (p < 0 || p >= buf.length) throw new Error('Corrupt database: read past the end of a page');
+            const safe = (big) => (big >= BigInt(Number.MIN_SAFE_INTEGER) && big <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(big) : big);
+            let v = 0;
+            for (let i = 0; i < 8; i++) {
+                if (p + i >= buf.length) throw new Error('Corrupt database: truncated varint');
+                const b = buf[p + i];
+                if (i < 7) {                                   // up to 49 bits: exact in a Number
+                    v = v * 128 + (b & 0x7f);
+                    if (!(b & 0x80)) return [v, p + i + 1];
+                } else {                                       // 8th byte: switch to BigInt
+                    const big = BigInt(v) * 128n + BigInt(b & 0x7f);
+                    if (!(b & 0x80)) return [safe(big), p + 8];
+                    if (p + 8 >= buf.length) throw new Error('Corrupt database: truncated varint');
+                    return [safe(BigInt.asIntN(64, (big << 8n) | BigInt(buf[p + 8]))), p + 9];   // 9-byte form: last byte contributes 8 bits
+                }
+            }
         }
+
+        static _corrupt(what) { return new Error('Corrupt database: ' + what); }
 
         _decodeText(b) {
             if (this.encoding === 2) return new TextDecoder('utf-16le').decode(b);
@@ -73,6 +91,8 @@
         }
 
         _readRecord(page, pos, payloadSize) {
+            if (typeof payloadSize !== 'number' || !(payloadSize >= 0) || payloadSize > 0x7fffffff || payloadSize > this.bytes.length + this.overlay.size * this.pageSize) throw SqliteDb._corrupt('implausible record size');
+            if (pos < 0 || pos > page.length) throw SqliteDb._corrupt('cell offset outside page');
             // local payload size rules (table b-tree leaf)
             const U = this.usable, X = U - 35;
             let local = payloadSize;
@@ -82,10 +102,14 @@
                 local = K <= X ? K : M;
             }
             let payload = page.subarray(pos, pos + local);
+            if (payload.length < local) throw SqliteDb._corrupt('record runs past the end of its page');
             if (local < payloadSize) {
                 const parts = [payload];
+                if (pos + local + 4 > page.length) throw SqliteDb._corrupt('overflow pointer outside page');
                 let next = new DataView(page.buffer, page.byteOffset, page.byteLength).getUint32(pos + local), remaining = payloadSize - local, guard = 0;
-                while (next && remaining > 0 && guard++ < 1e6) {
+                const maxPages = this.pageCount + this.overlay.size + 1;
+                while (next && remaining > 0) {
+                    if (guard++ > maxPages) throw SqliteDb._corrupt('overflow chain loops');
                     const ov = this._page(next);
                     next = new DataView(ov.buffer, ov.byteOffset, ov.byteLength).getUint32(0);
                     const take = Math.min(remaining, U - 4);
@@ -101,24 +125,32 @@
         _decodeRecord(buf) {
             const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
             let [hdrLen, p] = SqliteDb._varint(buf, 0);
+            if (typeof hdrLen !== 'number' || hdrLen > buf.length || hdrLen < p) throw SqliteDb._corrupt('bad record header length');
             const types = [];
-            while (p < hdrLen) { const [t, np] = SqliteDb._varint(buf, p); types.push(t); p = np; }
+            while (p < hdrLen) {
+                const [t, np] = SqliteDb._varint(buf, p);
+                if (typeof t !== 'number' || t < 0) throw SqliteDb._corrupt('bad serial type');
+                types.push(t); p = np;
+            }
             const out = [];
             let q = hdrLen;
+            const need = (n) => { if (q + n > buf.length) throw SqliteDb._corrupt('record value runs past its payload'); };
             for (const t of types) {
                 if (t === 0) out.push(null);
                 else if (t === 8) out.push(0);
                 else if (t === 9) out.push(1);
                 else if (t >= 1 && t <= 6) {
                     const n = [0, 1, 2, 3, 4, 6, 8][t];
+                    need(n);
                     let val = 0n;
                     for (let i = 0; i < n; i++) val = (val << 8n) | BigInt(buf[q + i]);
                     if (buf[q] & 0x80) val -= 1n << BigInt(n * 8);                              // two's complement
                     out.push(val >= BigInt(Number.MIN_SAFE_INTEGER) && val <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(val) : val);
                     q += n; continue;
-                } else if (t === 7) { out.push(dv.getFloat64(q)); q += 8; continue; }
+                } else if (t === 7) { need(8); out.push(dv.getFloat64(q)); q += 8; continue; }
                 else if (t >= 12) {
                     const len = t % 2 === 0 ? (t - 12) / 2 : (t - 13) / 2;
+                    need(len);
                     const slice = buf.subarray(q, q + len);
                     out.push(t % 2 === 0 ? slice.slice() : this._decodeText(slice));
                     q += len; continue;
@@ -128,12 +160,15 @@
         }
 
         /** Iterate all (rowid, record) pairs of a table b-tree. */
-        *_walkTable(rootPage, depth = 0) {
-            if (depth > 40) throw new Error('B-tree too deep (corrupt database?)');
+        *_walkTable(rootPage, depth = 0, seen = new Set()) {
+            if (depth > 40) throw SqliteDb._corrupt('b-tree too deep');
+            if (seen.has(rootPage)) throw SqliteDb._corrupt('b-tree page referenced twice (cycle)');
+            seen.add(rootPage);
             const page = this._page(rootPage);
             const base = rootPage === 1 ? 100 : 0;
             const dv = new DataView(page.buffer, page.byteOffset, page.byteLength);
             const type = page[base], cells = dv.getUint16(base + 3);
+            if (base + (type === 0x05 ? 12 : 8) + cells * 2 > page.length) throw SqliteDb._corrupt('cell pointer array outside page');
             if (type === 0x0d) {
                 for (let i = 0; i < cells; i++) {
                     const ptr = dv.getUint16(base + 8 + i * 2);
@@ -142,16 +177,25 @@
                     yield [rowid, this._readRecord(page, p2, payload)];
                 }
             } else if (type === 0x05) {
-                for (let i = 0; i < cells; i++) yield* this._walkTable(dv.getUint32(dv.getUint16(base + 12 + i * 2)), depth + 1);
-                yield* this._walkTable(dv.getUint32(base + 8), depth + 1);
-            } else throw new Error(`Unexpected b-tree page type 0x${type.toString(16)} on page ${rootPage}`);
+                for (let i = 0; i < cells; i++) yield* this._walkTable(dv.getUint32(dv.getUint16(base + 12 + i * 2)), depth + 1, seen);
+                yield* this._walkTable(dv.getUint32(base + 8), depth + 1, seen);
+            } else throw SqliteDb._corrupt(`unexpected b-tree page type 0x${type.toString(16)} on page ${rootPage}`);
+        }
+
+        /** Run fn, converting low-level range/type errors caused by corruption into a clear message. */
+        static _guard(fn) {
+            try { return fn(); } catch (e) {
+                if (e && e.name === 'RangeError') throw SqliteDb._corrupt(e.message);
+                throw e;
+            }
         }
 
         /** sqlite_master entries: { type, name, tbl, rootpage, sql } */
         schema() {
             if (!this._master) {
-                this._master = [];
-                for (const [, r] of this._walkTable(1)) this._master.push({ type: r[0], name: r[1], tbl: r[2], rootpage: r[3], sql: r[4] });
+                const m = [];
+                SqliteDb._guard(() => { for (const [, r] of this._walkTable(1)) m.push({ type: r[0], name: r[1], tbl: r[2], rootpage: r[3], sql: r[4] }); });
+                this._master = m;
             }
             return this._master;
         }
@@ -197,14 +241,16 @@
             if (t.virtual) return { columns: cols, rows: [], hasMore: false, note: 'Virtual table - contents are not stored in the file' };
             if (t.withoutRowid) return { columns: cols, rows: [], hasMore: false, note: 'WITHOUT ROWID tables are not supported by this viewer' };
             const out = []; let i = 0, hasMore = false;
-            for (const [rowid, rec] of this._walkTable(t.rootpage)) {
-                if (i++ < offset) continue;
-                if (out.length >= limit) { hasMore = true; break; }
-                const row = rec.slice();
-                t.columns.forEach((c, k) => { if (c.rowidAlias && row[k] === null) row[k] = rowid; });
-                while (row.length < cols.length) row.push(null);              // columns added later with ALTER TABLE
-                out.push(row);
-            }
+            SqliteDb._guard(() => {
+                for (const [rowid, rec] of this._walkTable(t.rootpage)) {
+                    if (i++ < offset) continue;
+                    if (out.length >= limit) { hasMore = true; break; }
+                    const row = rec.slice();
+                    t.columns.forEach((c, k) => { if (c.rowidAlias && row[k] === null) row[k] = rowid; });
+                    while (row.length < cols.length) row.push(null);              // columns added later with ALTER TABLE
+                    out.push(row);
+                }
+            });
             return { columns: cols, rows: out, hasMore };
         }
 
@@ -212,7 +258,7 @@
             const t = this.tables().find(x => x.name === tableName);
             if (!t || t.virtual || t.withoutRowid) return null;
             let n = 0;
-            for (const _ of this._walkTable(t.rootpage)) n++;
+            SqliteDb._guard(() => { for (const _ of this._walkTable(t.rootpage)) n++; });
             return n;
         }
     }
