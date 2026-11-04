@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  <strong>Android Security Auditing Platform</strong>
+  <strong>Android Security Auditing Platform</strong><br>
+  Created by <a href="https://github.com/thecybersandeep/adbauditor">Sandeep Wawdane</a> &middot; Enhanced &amp; maintained by <a href="https://github.com/0x0806/adbauditor">0x0806</a>
 </p>
 
 <p align="center">
-  <a href="https://adbauditor.com/">Live</a> •
   <a href="#features">Features</a> •
   <a href="#installation">Installation</a> •
   <a href="#usage">Usage</a> •
@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/Platform-Web-blue?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/Protocol-WebUSB%20%2B%20ADB-green?style=flat-square" alt="Protocol">
   <img src="https://img.shields.io/badge/Privacy-100%25%20Client--Side-purple?style=flat-square" alt="Privacy">
-  <img src="https://img.shields.io/github/license/thecybersandeep/adbauditor?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/License-CC%20BY--NC--ND%204.0-lightgrey?style=flat-square" alt="License">
 </p>
 
 ---
@@ -30,6 +30,15 @@
 ADB Auditor is a browser-based Android security auditing tool designed for penetration testers, security researchers, and cybersecurity professionals. It connects to Android devices via WebUSB and provides comprehensive security analysis capabilities without requiring any server-side processing.
 
 **🔒 100% Client-Side** - All data processing happens in your browser. No data is ever uploaded to any server.
+
+## Credits
+
+- **Original author: Sandeep Wawdane** ([@thecybersandeep](https://github.com/thecybersandeep)) - created ADB Auditor, its WebUSB/ADB architecture and UI. Original repository: https://github.com/thecybersandeep/adbauditor
+- **v2.0 enhancements: 0x0806** ([@0x0806](https://github.com/0x0806)) - hardened protocol core, rewritten auditor, new tools, tests, accessibility and docs. See [CHANGELOG.md](CHANGELOG.md) (76 itemised changes) and [NOTICE.md](NOTICE.md).
+
+## What's new in 2.0
+
+Safer (injection/XSS fixes, CSP), more reliable (serialised USB transport, real timeouts, working key auth), more accurate (backup, debuggable, deep-link and network checks fixed), and more capable (command palette, app triage, device posture audit, streaming logcat, file operations, report export in JSON/Markdown/HTML/CSV, offline mode). Details in the [changelog](CHANGELOG.md).
 
 ## Features
 
@@ -42,6 +51,11 @@ ADB Auditor is a browser-based Android security auditing tool designed for penet
 | 📸 **Screenshot** | Capture device screen for documentation and evidence |
 | 🔐 **Security Scan** | Automated security checks for common vulnerabilities |
 | 📊 **Device Info** | Comprehensive device information and system properties |
+| 🧭 **App Triage** | Rank every installed app by risk (debuggable, backup, SDK levels, permissions) |
+| 🛡️ **Device Posture** | Patch age, bootloader, verified boot, SELinux, ADB-over-network, accessibility services |
+| 📝 **Reports** | Risk score, history/diff, export as JSON, Markdown, HTML or CSV |
+| ⌨️ **Command Palette** | `Ctrl/Cmd+K` to jump anywhere; full keyboard navigation |
+| 📴 **Offline** | Installable PWA; works without a network after the first load |
 
 ## Screenshots
 
@@ -81,14 +95,11 @@ Full-featured file browser powered by ADB with optional root mode, enabling navi
 
 ## Installation
 
-### Option 1: Use Online (Recommended)
-Visit [https://adbauditor.com/](https://adbauditor.com/)
-
-### Option 2: Run Locally (No Hosting Required)
+### Option 1: Run Locally (No Hosting Required)
 
 ```bash
 # Clone the repository
-git clone https://github.com/thecybersandeep/adbauditor.git
+git clone https://github.com/0x0806/adbauditor.git
 
 # Navigate to directory
 cd adbauditor
@@ -97,11 +108,11 @@ cd adbauditor
 google-chrome index.html
 ```
 
-### Option 3: Self-Host
+### Option 2: Self-Host
 
 ```
 # Clone the repository
-git clone https://github.com/thecybersandeep/adbauditor.git
+git clone https://github.com/0x0806/adbauditor.git
 
 # Navigate to directory
 cd adbauditor
@@ -114,7 +125,7 @@ npx serve .
 php -S localhost:8080
 ```
 
-### Option 4: Docker
+### Option 3: Docker
 
 ```
 # Using Docker Compose
@@ -153,30 +164,40 @@ Access at `http://localhost:8080`
 ```
 adbauditor/
 ├── js/
+│   ├── utils.js            # Shared pure helpers (quoting, parsing, ZIP, reports)
 │   ├── adb-core.js         # ADB protocol implementation
+│   ├── security-auditor.js # Security scanning module
 │   ├── app.js              # Main application logic
-│   └── security-auditor.js # Security scanning module
-├── img/
-│   └── logo.svg            # Application logo
-├── docs/
-│   ├── API.md              # API documentation
-│   └── SECURITY.md         # Security considerations
-├── index.html              # Main application
-├── 404.html                # Error page
-├── robots.txt              # SEO robots file
-├── sitemap.xml             # SEO sitemap
-├── LICENSE                 # MIT License
-└── README.md               # This file
+│   └── register-sw.js      # Service worker registration
+├── tests/                  # node:test unit tests, mock ADB device, Chromium e2e
+├── docs/                   # API.md, SECURITY.md
+├── img/logo.svg
+├── index.html, 404.html, sw.js, manifest.webmanifest
+├── CHANGELOG.md, NOTICE.md, LICENSE
+└── Dockerfile, nginx.conf, docker-compose.yml, .github/workflows/ci.yml
 ```
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl + 1-6` | Switch between tabs |
-| `Ctrl + R` | Refresh current view |
-| `Ctrl + D` | Disconnect device |
-| `↑ / ↓` | Navigate shell history |
+| `Alt + 1-6` | Switch section |
+| `Alt + R` | Refresh current view |
+| `Alt + D` | Disconnect device |
+| `Ctrl/Cmd + K` | Command palette |
+| `?` | Shortcut help |
+| `Tab` / `↑` `↓` | Shell: autocomplete / history |
+| `Ctrl + C` / `Ctrl + L` | Shell: stop streaming command / clear |
+
+### Development & Testing
+
+```bash
+npm run lint       # syntax check
+npm test           # 61 unit tests (mock ADB device, auditor fixtures, helpers)
+npm run test:e2e   # headless Chromium with a fake WebUSB device
+```
+
+Protocol code is tested against a scriptable mock device, not physical hardware.
 
 ## Privacy & Security
 
@@ -210,7 +231,7 @@ adbauditor/
 
 ## License
 
-This project is licensed under the License: CC BY-NC-ND 4.0
+This project is licensed under CC BY-NC-ND 4.0, Copyright (c) 2026 Sandeep (original author). See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). Note that the NoDerivatives term means modified versions should be distributed only with the original author's permission.
 
 
 
@@ -223,9 +244,10 @@ This tool is intended for authorized security testing and educational purposes o
 ---
 
 <p align="center">
-  Made with ❤️ for the Security Community
+  Made with ❤️ for the Security Community<br>
+  Created by Sandeep Wawdane · Enhanced by 0x0806
 </p>
 
 <p align="center">
-  <a href="https://github.com/thecybersandeep/adbauditor/stargazers">⭐ Star this repo</a> if you find it useful!
+  <a href="https://github.com/0x0806/adbauditor/stargazers">⭐ Star this repo</a> if you find it useful!
 </p>

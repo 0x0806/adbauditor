@@ -1,5 +1,7 @@
 # ADB Auditor API Documentation
 
+> Original project by Sandeep Wawdane; v2.0 API additions and fixes by 0x0806.
+
 ## Overview
 
 ADB Auditor uses the WebUSB API to communicate with Android devices through the ADB protocol. This document describes the internal API structure for developers who want to extend or modify the tool.
@@ -66,6 +68,21 @@ const packages = await adb.listPackages(false); // User apps only
 const allPackages = await adb.listPackages(true); // Include system
 ```
 
+##### shell(command, idleTimeoutMs = 30000)
+Runs a command; `idleTimeoutMs` is the longest silence allowed between output chunks. Output is UTF-8 safe. Always quote untrusted arguments with `ABUtils.shQuote()`.
+
+##### shellWithStatus(command)
+Resolves `{ output, code }` including the exit status.
+
+##### streamShell(command, onChunk)
+Starts a long-running command (e.g. `logcat`). Resolves `{ stop(), done }`.
+
+##### statFile(path), pullFile(path, onProgress(bytes, total)), pushFile(path, bytes, mode, onProgress(sent, total))
+Sync-protocol file operations. Concurrent calls are safe.
+
+##### getApkPaths(packageName)
+Returns every APK path (base + splits).
+
 ##### pullApk(packageName)
 Extracts APK file for a package.
 
@@ -116,11 +133,13 @@ const results = await auditor.runFullAudit('com.example.app');
 
 #### Audit Categories
 
-- `localStorage` - SharedPreferences analysis
-- `databases` - SQLite database inspection
-- `files` - File permission checks
-- `permissions` - App permission analysis
-- `signatures` - Certificate validation
+`runFullAudit(pkg, onProgress, { includeDevice })` returns `{ packageName, timestamp, durationMs, summary, tests, riskScore }`. Included tests: local storage (incl. world-readable files), backup, logs (secret scanning), exported components, deep links, intent filters, WebView, debuggable, SDK levels, signature scheme, install source, network security, auth storage, permissions, plus device posture, root and emulator indicators.
+
+Other entry points: `runDeviceAudit()`, `triageApps(packages, onProgress, concurrency)`, `getAppInfo()`, `getActiveConnections()`, `getRunningProcesses()`, `SecurityAuditor.scanForSecrets(text)`.
+
+### ABUtils (`js/utils.js`)
+
+Pure helpers: `shQuote`, `suWrap`, `isValidPackageName`, `normalizePath`, `escapeHtml`, `parseLsLine`, `parseResolverFilters`, `parsePackageFlags`, `buildZip`, `crc32`, `computeRiskScore`, `reportToMarkdown/CSV/Html`, `downloadBlob`.
 
 ## Events
 
@@ -146,8 +165,8 @@ adb.pullFile(path, (progress) => {
 try {
     await adb.connect(device);
 } catch (error) {
-    if (error.type === 'AUTH_FAILED') {
-        // Handle authentication failure
+    if (error.type === 'TIMEOUT') {
+        // Device did not answer in time
     } else if (error.type === 'CONNECTION_LOST') {
         // Handle disconnection
     }
@@ -156,11 +175,12 @@ try {
 
 ## Error Types
 
-- `AUTH_FAILED` - Device rejected connection
 - `CONNECTION_LOST` - USB connection interrupted
 - `PERMISSION_DENIED` - Insufficient permissions
 - `NOT_FOUND` - File or package not found
 - `PROTOCOL_ERROR` - ADB protocol error
+- `TIMEOUT` - No answer from the device in time
+- `DEVICE_BUSY` - Another ADB client holds the interface
 
 ## Examples
 
@@ -191,4 +211,4 @@ await adb.disconnect();
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on contributing to the API.
+Run `npm run lint && npm test` before opening a pull request.

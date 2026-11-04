@@ -38,8 +38,8 @@ ADB Auditor is designed with privacy and security as core principles. This docum
 ### Before Using
 
 1. **Verify Source**: Only use ADB Auditor from official sources
-   - GitHub: https://github.com/thecybersandeep/adbauditor
-   - Official Site: https://adbauditor.com/
+   - Original: https://github.com/thecybersandeep/adbauditor (Sandeep Wawdane)
+   - Enhanced 2.0: https://github.com/0x0806/adbauditor (0x0806)
 
 2. **Check HTTPS**: Ensure you're using HTTPS connection
 
@@ -79,6 +79,15 @@ ADB Auditor is designed with privacy and security as core principles. This docum
 - Device must approve each new connection
 
 
+## Hardening in 2.0 (0x0806)
+
+- Everything originating from the device (file names, properties, package names, logs) is treated as hostile: HTML-escaped on render and never concatenated into HTML.
+- Every value placed in a shell command is single-quoted; package names are validated first.
+- A Content-Security-Policy restricts scripts to this origin (`script-src 'self'`).
+- Scan reports contain masked samples of secrets, never raw values; CSV exports defuse formula injection.
+- The only external request is the Google Fonts stylesheet; the CSP allows nothing else.
+- Local storage holds only UI preferences, shell history (last 50 commands) and scan summaries; clear site data to remove them. The ADB RSA key is kept in IndexedDB.
+
 ## Legal Disclaimer
 
 ADB Auditor is provided for **authorized security testing only**. Users are responsible for:
@@ -92,7 +101,7 @@ ADB Auditor is provided for **authorized security testing only**. Users are resp
 
 ## Audit Log
 
-This tool does not maintain any audit logs. All activities are performed in real-time within your browser session and are not persisted.
+There is no server-side audit log. Scan summaries and shell history are stored only in your own browser (see above).
 
 ## Third-Party Dependencies
 
