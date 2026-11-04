@@ -1,4 +1,10 @@
-/** @preserve @author Sandeep Wawdane @license MIT */
+/**
+ * ADB protocol core (WebUSB).
+ * @preserve
+ * @author Sandeep Wawdane (original creator of ADB Auditor)
+ * @contributor 0x0806 (concurrency-safe transport, auth signing, sync fixes)
+ * @license See LICENSE (CC BY-NC-ND 4.0, (c) Sandeep Wawdane)
+ */
 (function(global) {
     'use strict';
 
@@ -167,15 +173,111 @@
         }
     }
 
+    /* ---------- Minimal DER / RSA helpers (for ADB token signing) ---------- */
+
+    function derRead(buf, pos) {
+        const tag = buf[pos];
+        let len = buf[pos + 1];
+        let p = pos + 2;
+        if (len & 0x80) {
+            const n = len & 0x7f;
+            len = 0;
+            for (let i = 0; i < n; i++) len = (len * 256) + buf[p++];
+        }
+        return { tag, start: p, end: p + len };
+    }
+
+    function bytesToBigInt(bytes) {
+        let hex = '';
+        for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+        return BigInt('0x' + (hex || '0'));
+    }
+
+    function bigIntToBytes(value, length) {
+        let hex = value.toString(16);
+        if (hex.length % 2) hex = '0' + hex;
+        const out = new Uint8Array(length);
+        const raw = hex.match(/../g) || [];
+        const off = length - raw.length;
+        if (off < 0) throw new Error('Integer too large');
+        raw.forEach((h, i) => { out[off + i] = parseInt(h, 16); });
+        return out;
+    }
+
+    function modPow(base, exp, mod) {
+        let result = 1n;
+        base %= mod;
+        while (exp > 0n) {
+            if (exp & 1n) result = (result * base) % mod;
+            exp >>= 1n;
+            base = (base * base) % mod;
+        }
+        return result;
+    }
+
+    /** Extract n, e, d from a PKCS#8 wrapped RSAPrivateKey. */
+    function parsePkcs8Rsa(pkcs8) {
+        const buf = pkcs8 instanceof Uint8Array ? pkcs8 : new Uint8Array(pkcs8);
+        const outer = derRead(buf, 0);                       // PrivateKeyInfo SEQUENCE
+        let p = outer.start;
+        const version = derRead(buf, p); p = version.end;    // INTEGER
+        const alg = derRead(buf, p); p = alg.end;            // AlgorithmIdentifier
+        const octet = derRead(buf, p);                       // OCTET STRING
+        const rsa = derRead(buf, octet.start);               // RSAPrivateKey SEQUENCE
+        p = rsa.start;
+        const ints = [];
+        for (let i = 0; i < 4; i++) {                        // version, n, e, d
+            const item = derRead(buf, p);
+            ints.push(buf.slice(item.start, item.end));
+            p = item.end;
+        }
+        const strip = (b) => { let i = 0; while (i < b.length - 1 && b[i] === 0) i++; return b.slice(i); };
+        return { n: bytesToBigInt(strip(ints[1])), e: bytesToBigInt(strip(ints[2])), d: bytesToBigInt(strip(ints[3])) };
+    }
+
+    const SHA1_DIGEST_INFO = new Uint8Array([0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14]);
+
+    /** EMSA-PKCS1-v1_5 block where `digest` (20 bytes) is used as-is (ADB signs the token without re-hashing). */
+    function pkcs1Sha1Block(digest, k = 256) {
+        const em = new Uint8Array(k);
+        em[1] = 0x01;
+        const tLen = SHA1_DIGEST_INFO.length + digest.length;
+        em.fill(0xff, 2, k - tLen - 1);
+        em[k - tLen - 1] = 0x00;
+        em.set(SHA1_DIGEST_INFO, k - tLen);
+        em.set(digest, k - digest.length);
+        return em;
+    }
+
+    /** Sign the 20-byte AUTH token exactly like `adb` does (RSA_sign with NID_sha1 over the raw token). */
+    function signAdbToken(pkcs8, token) {
+        const { n, d } = parsePkcs8Rsa(pkcs8);
+        const em = bytesToBigInt(pkcs1Sha1Block(token, 256));
+        return bigIntToBytes(modPow(em, d, n), 256);
+    }
+
+    /** Build the base64 public key blob in Android's RSAPublicKey layout. */
     function generatePublicKey(privKeyBuf) {
-        const n = privKeyBuf.slice(38, 38 + 256);
-        const pubKey = new Uint8Array(4 + 4 + 256 + 256 + 4);
-        const v = new DataView(pubKey.buffer);
-        v.setUint32(0, 64, true);
-        v.setInt32(4, 0, true);
-        for (let i = 0; i < 256; i++) pubKey[8 + i] = n[255 - i];
-        v.setUint32(8 + 256 + 256, 65537, true);
-        return btoa(String.fromCharCode(...pubKey));
+        const { n, e } = parsePkcs8Rsa(privKeyBuf);
+        const words = 64;
+        const R = 1n << 2048n;
+        const n0 = n & 0xffffffffn;
+        // n0inv = -n^-1 mod 2^32
+        let inv = 1n;
+        for (let i = 0; i < 5; i++) inv = (inv * (2n - n0 * inv)) & 0xffffffffn;
+        const n0inv = (0x100000000n - inv) & 0xffffffffn;
+        const rr = (R * R) % n;
+        const out = new Uint8Array(4 + 4 + 256 + 256 + 4);
+        const v = new DataView(out.buffer);
+        v.setUint32(0, words, true);
+        v.setUint32(4, Number(n0inv), true);
+        const littleEndian = (value) => bigIntToBytes(value, 256).reverse();
+        out.set(littleEndian(n), 8);
+        out.set(littleEndian(rr), 8 + 256);
+        v.setUint32(8 + 512, Number(e), true);
+        let bin = '';
+        for (let i = 0; i < out.length; i++) bin += String.fromCharCode(out[i]);
+        return btoa(bin);
     }
 
     class USBWatcher {
@@ -514,6 +616,17 @@
         }
     }
 
+    const READ_SIZE = 64 * 1024;
+    const SYNC_MAX_CHUNK = 64 * 1024;
+
+    /** Serialise async work on a named promise chain (a tiny mutex). */
+    function withLock(owner, key, fn) {
+        const prev = owner[key];
+        let release;
+        owner[key] = new Promise(r => { release = r; });
+        return prev.then(fn).finally(release);
+    }
+
     class ADBConnection {
         constructor() {
             this.device = null;
@@ -524,16 +637,22 @@
             this.localId = 1;
             this.credentials = new CredentialStore();
             this.maxPayload = ADB.MAX_PAYLOAD;
-            
-            this.readBuffer = new Uint8Array(0);
+            this.banner = '';
+
+            this._rxChunks = [];
+            this._rxLen = 0;
+            this._inflight = null;
+            this._readLock = Promise.resolve();
+            this._writeLock = Promise.resolve();
             this.pendingPackets = new Map();
-            
+
             this.lastActivity = Date.now();
             this.connectionLost = false;
-            
+            this.stats = { bytesIn: 0, bytesOut: 0, commands: 0 };
+
             this.onDisconnect = null;
             this.onError = null;
-            
+
             this._disconnectedResolve = null;
             this._disconnectedReject = null;
             this.disconnected = new Promise((resolve, reject) => {
@@ -546,15 +665,15 @@
             if (descriptor.type !== 'usb') {
                 throw new ADBError('Only USB devices are currently supported', ErrorType.UNKNOWN);
             }
-            
+
             this.deviceDescriptor = descriptor;
             this.device = descriptor.usbDevice;
-            
+
             await this.openDevice();
             await this.authenticate();
-            
+
             descriptor.lastConnected = new Date();
-            
+
             return true;
         }
 
@@ -600,11 +719,11 @@
             try {
                 await this.device.open();
                 const info = this.findInterface();
-                if (!info) { 
-                    await this.device.close(); 
+                if (!info) {
+                    await this.device.close();
                     throw new ADBError('No ADB interface found. Enable USB debugging on your device.', ErrorType.NOT_FOUND);
                 }
-                
+
                 if (this.device.configuration?.configurationValue !== info.cfg.configurationValue) {
                     await this.device.selectConfiguration(info.cfg.configurationValue);
                 }
@@ -621,21 +740,30 @@
             }
         }
 
+        /* ----- transport: serialised writes, serialised packet reads ----- */
+
         async send(pkt) {
             if (this.connectionLost) {
                 throw new ADBError('Connection lost', ErrorType.CONNECTION_LOST, true);
             }
-            try {
-                await this.device.transferOut(this.outEndpoint.endpointNumber, pkt.header);
-                if (pkt.payload.length > 0) {
-                    await this.device.transferOut(this.outEndpoint.endpointNumber, pkt.payload);
+            // header + payload must go out back-to-back; concurrent senders are queued
+            return withLock(this, '_writeLock', async () => {
+                if (this.connectionLost) {
+                    throw new ADBError('Connection lost', ErrorType.CONNECTION_LOST, true);
                 }
-                this.lastActivity = Date.now();
-            } catch (e) {
-                logError('Send failed:', e);
-                this.markDisconnected('USB write failed: ' + e.message);
-                throw new ADBError('Connection lost during send', ErrorType.CONNECTION_LOST, true);
-            }
+                try {
+                    await this.device.transferOut(this.outEndpoint.endpointNumber, pkt.header);
+                    if (pkt.payload.length > 0) {
+                        await this.device.transferOut(this.outEndpoint.endpointNumber, pkt.payload);
+                    }
+                    this.stats.bytesOut += pkt.header.length + pkt.payload.length;
+                    this.lastActivity = Date.now();
+                } catch (e) {
+                    logError('Send failed:', e);
+                    this.markDisconnected('USB write failed: ' + e.message);
+                    throw new ADBError('Connection lost during send', ErrorType.CONNECTION_LOST, true);
+                }
+            });
         }
 
         markDisconnected(reason = 'Connection lost') {
@@ -643,111 +771,162 @@
                 log('Marking connection as lost:', reason);
                 this.connectionLost = true;
                 this.connected = false;
-                
+
                 if (this._disconnectedResolve) {
                     this._disconnectedResolve(reason);
                 }
-                
+
                 if (this.onDisconnect) {
                     this.onDisconnect(reason);
                 }
             }
         }
 
-        async readExact(len, timeout = 30000) {
-            const startTime = Date.now();
-            
-            while (this.readBuffer.length < len) {
+        _resetBuffer() {
+            this._rxChunks = [];
+            this._rxLen = 0;
+        }
+
+        /** Start (or reuse) the single in-flight USB read; its data lands in the rx buffer. */
+        _ensureRead() {
+            if (this._inflight) return this._inflight;
+            const p = this.device.transferIn(this.inEndpoint.endpointNumber, READ_SIZE).then(res => {
+                this._inflight = null;
+                if (res.data && res.data.byteLength > 0) {
+                    const chunk = new Uint8Array(res.data.buffer, res.data.byteOffset, res.data.byteLength);
+                    this._rxChunks.push(chunk);
+                    this._rxLen += chunk.length;
+                    this.stats.bytesIn += chunk.length;
+                    this.lastActivity = Date.now();
+                }
+            }, e => {
+                this._inflight = null;
+                logError('Read failed:', e);
+                this.markDisconnected('USB read failed: ' + e.message);
+            });
+            this._inflight = p;
+            return p;
+        }
+
+        /** Wait until at least `len` bytes are buffered. Never consumes data, so a timeout cannot desync the stream. */
+        async _waitBytes(len, timeout) {
+            const deadline = Date.now() + timeout;
+            while (this._rxLen < len) {
                 if (this.connectionLost) {
                     throw new ADBError('Connection lost', ErrorType.CONNECTION_LOST, true);
                 }
-                
-                if (Date.now() - startTime > timeout) {
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) {
                     throw new ADBError('Read timeout - device not responding', ErrorType.TIMEOUT, true);
                 }
-                
+                let timer;
+                const timedOut = new Promise(r => { timer = setTimeout(r, remaining); });
                 try {
-                    const result = await this.device.transferIn(
-                        this.inEndpoint.endpointNumber, 
-                        this.inEndpoint.packetSize || 512
-                    );
-                    if (result.data && result.data.byteLength > 0) {
-                        const newData = new Uint8Array(result.data.buffer);
-                        const combined = new Uint8Array(this.readBuffer.length + newData.length);
-                        combined.set(this.readBuffer, 0);
-                        combined.set(newData, this.readBuffer.length);
-                        this.readBuffer = combined;
-                        this.lastActivity = Date.now();
-                    }
-                } catch (e) {
-                    logError('Read failed:', e);
-                    this.markDisconnected('USB read failed: ' + e.message);
-                    throw new ADBError('Connection lost during read', ErrorType.CONNECTION_LOST, true);
+                    await Promise.race([this._ensureRead(), timedOut]);
+                } finally {
+                    clearTimeout(timer);
                 }
             }
-            const data = this.readBuffer.slice(0, len);
-            this.readBuffer = this.readBuffer.slice(len);
+        }
+
+        _peek(len) {
+            const out = new Uint8Array(len);
+            let off = 0;
+            for (const c of this._rxChunks) {
+                if (off >= len) break;
+                const take = Math.min(c.length, len - off);
+                out.set(c.subarray(0, take), off);
+                off += take;
+            }
+            return out;
+        }
+
+        _drop(len) {
+            let remaining = len;
+            while (remaining > 0 && this._rxChunks.length) {
+                const c = this._rxChunks[0];
+                if (c.length <= remaining) {
+                    remaining -= c.length;
+                    this._rxChunks.shift();
+                } else {
+                    this._rxChunks[0] = c.subarray(remaining);
+                    remaining = 0;
+                }
+            }
+            this._rxLen -= len;
+        }
+
+        async readExact(len, timeout = 30000) {
+            await this._waitBytes(len, timeout);
+            const data = this._peek(len);
+            this._drop(len);
             return data;
         }
 
-        async recvPacket() {
-            const headerData = await this.readExact(24);
-            const header = parseHeader(headerData);
-            
+        async _recvPacketUnlocked(timeout = 30000) {
+            await this._waitBytes(24, timeout);
+            const header = parseHeader(this._peek(24));
+
             const expectedMagic = (header.cmd ^ 0xFFFFFFFF) >>> 0;
             if (header.magic !== expectedMagic) {
                 logError(`Invalid packet magic! cmd=${cmdName(header.cmd)} magic=${header.magic.toString(16)} expected=${expectedMagic.toString(16)}`);
-                this.readBuffer = new Uint8Array(0);
+                this._resetBuffer();
                 this.markDisconnected('Invalid packet received - connection may be stale');
                 throw new ADBError('Invalid packet - connection lost', ErrorType.CONNECTION_LOST, true);
             }
-            
-            let payload = new Uint8Array(0);
-            if (header.len > 0) {
-                if (header.len > ADB.MAX_PAYLOAD) {
-                    throw new ADBError(`Payload too large: ${header.len}`, ErrorType.PROTOCOL_ERROR);
-                }
-                payload = await this.readExact(header.len);
+            if (header.len > ADB.MAX_PAYLOAD) {
+                this._resetBuffer();
+                this.markDisconnected('Oversized packet received');
+                throw new ADBError(`Payload too large: ${header.len}`, ErrorType.PROTOCOL_ERROR);
             }
-            
+
+            // header stays buffered until the whole packet has arrived
+            await this._waitBytes(24 + header.len, timeout);
+            this._drop(24);
+            const payload = header.len > 0 ? this._peek(header.len) : new Uint8Array(0);
+            if (header.len > 0) this._drop(header.len);
+
             log(`<< ${cmdName(header.cmd)} arg0=${header.arg0} arg1=${header.arg1} len=${header.len}`);
             return { ...header, payload };
         }
 
-        async waitPacket(localId, expectedCmds, timeout = 30000) {
-            const queue = this.pendingPackets.get(localId) || [];
-            for (let i = 0; i < queue.length; i++) {
-                if (expectedCmds.includes(queue[i].cmd)) {
-                    return queue.splice(i, 1)[0];
-                }
-            }
+        async recvPacket(timeout = 30000) {
+            return withLock(this, '_readLock', () => this._recvPacketUnlocked(timeout));
+        }
 
-            const startTime = Date.now();
+        /**
+         * Wait for a packet addressed to `localId`. Packets for other sockets are queued for their owners,
+         * so any number of commands/streams can run concurrently.
+         */
+        async waitPacket(localId, expectedCmds, timeout = 30000) {
+            const deadline = Date.now() + timeout;
+            const take = () => {
+                const queue = this.pendingPackets.get(localId);
+                if (!queue) return null;
+                const i = queue.findIndex(p => expectedCmds.includes(p.cmd) || p.cmd === ADB.CMD_CLSE);
+                return i >= 0 ? queue.splice(i, 1)[0] : null;
+            };
             while (true) {
-                if (Date.now() - startTime > timeout) {
+                const queued = take();
+                if (queued) return queued;
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) {
                     throw new ADBError('Operation timed out', ErrorType.TIMEOUT, true);
                 }
-                
-                const pkt = await this.recvPacket();
-                
-                if (pkt.arg1 === localId && expectedCmds.includes(pkt.cmd)) {
-                    return pkt;
-                }
-                
-                if (pkt.arg1 === localId && pkt.cmd === ADB.CMD_CLSE) {
-                    return pkt;
-                }
-
-                const targetId = pkt.arg1;
-                if (!this.pendingPackets.has(targetId)) {
-                    this.pendingPackets.set(targetId, []);
-                }
-                this.pendingPackets.get(targetId).push(pkt);
+                const pkt = await withLock(this, '_readLock', async () => {
+                    const again = take();            // another waiter may have queued ours while we waited for the lock
+                    if (again) return again;
+                    const p = await this._recvPacketUnlocked(Math.max(1, deadline - Date.now()));
+                    if (p.arg1 === localId) return p;
+                    if (this.pendingPackets.has(p.arg1)) this.pendingPackets.get(p.arg1).push(p);
+                    return null;                     // else: packet for a closed socket - drop
+                });
+                if (pkt) return pkt;
             }
         }
 
         async authenticate() {
-            this.readBuffer = new Uint8Array(0);
+            this._resetBuffer();
             this.pendingPackets.clear();
             this.connectionLost = false;
             this.localId = 1;
@@ -758,13 +937,22 @@
 
             const authTimeout = 60000;
             const startTime = Date.now();
-            
+
             while (true) {
-                if (Date.now() - startTime > authTimeout) {
+                const left = authTimeout - (Date.now() - startTime);
+                if (left <= 0) {
                     throw new ADBError('Connection timeout. Accept the USB debugging prompt on your device.', ErrorType.TIMEOUT);
                 }
-                
-                const pkt = await this.recvPacket();
+
+                let pkt;
+                try {
+                    pkt = await this.recvPacket(left);
+                } catch (e) {
+                    if (e.type === ErrorType.TIMEOUT) {
+                        throw new ADBError('Connection timeout. Accept the USB debugging prompt on your device.', ErrorType.TIMEOUT);
+                    }
+                    throw e;
+                }
                 if (pkt.cmd === ADB.CMD_CNXN) {
                     this.maxPayload = Math.min(this.maxPayload, pkt.arg1);
                     this.connected = true;
@@ -773,6 +961,7 @@
                     return true;
                 } else if (pkt.cmd === ADB.CMD_AUTH) {
                     await this.handleAuth(pkt);
+                    if (this.connected) return true;   // a stored key was accepted
                 }
             }
         }
@@ -783,6 +972,16 @@
             return this.authenticate();
         }
 
+        async _signToken(keyBuf, token) {
+            try {
+                return signAdbToken(keyBuf, token);
+            } catch (e) {
+                log('Raw token signing failed, falling back to WebCrypto:', e.message);
+                const privKey = await this.credentials.importKey(keyBuf);
+                return new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privKey, token));
+            }
+        }
+
         async handleAuth(pkt) {
             if (pkt.arg0 !== ADB.AUTH_TOKEN) return;
             let token = pkt.payload;
@@ -791,11 +990,10 @@
             const keys = await this.credentials.getKeys();
             for (const keyBuf of keys) {
                 try {
-                    const privKey = await this.credentials.importKey(keyBuf);
-                    const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privKey, token);
+                    const sig = await this._signToken(keyBuf, token);
                     log('>> AUTH_SIGNATURE');
-                    await this.send(makePacket(ADB.CMD_AUTH, ADB.AUTH_SIGNATURE, 0, new Uint8Array(sig)));
-                    
+                    await this.send(makePacket(ADB.CMD_AUTH, ADB.AUTH_SIGNATURE, 0, sig));
+
                     const resp = await this.recvPacket();
                     if (resp.cmd === ADB.CMD_CNXN) {
                         this.maxPayload = Math.min(this.maxPayload, resp.arg1);
@@ -809,6 +1007,7 @@
                         log('Key rejected, got new token');
                     }
                 } catch (e) {
+                    if (e instanceof ADBError && e.type === ErrorType.CONNECTION_LOST) throw e;
                     log('Key failed:', e.message);
                 }
             }
@@ -817,35 +1016,45 @@
             const newKey = await this.credentials.generateKey();
             const pubKeyB64 = generatePublicKey(newKey.buffer);
             log('>> AUTH_RSAPUBLICKEY');
-            await this.send(makePacket(ADB.CMD_AUTH, ADB.AUTH_RSAPUBLICKEY, 0, 
+            await this.send(makePacket(ADB.CMD_AUTH, ADB.AUTH_RSAPUBLICKEY, 0,
                 encoder.encode(pubKeyB64 + ' ADBauditor@browser\0')));
         }
+
+        /* ----- sockets ----- */
 
         async openSocket(service) {
             const localId = this.localId++;
             this.pendingPackets.set(localId, []);
-            
+
             log(`>> OPEN[${localId}] ${service}`);
-            await this.send(makePacket(ADB.CMD_OPEN, localId, 0, encoder.encode(service + '\0')));
-            
-            const pkt = await this.waitPacket(localId, [ADB.CMD_OKAY, ADB.CMD_CLSE]);
-            if (pkt.cmd === ADB.CMD_CLSE) {
+            try {
+                await this.send(makePacket(ADB.CMD_OPEN, localId, 0, encoder.encode(service + '\0')));
+
+                const pkt = await this.waitPacket(localId, [ADB.CMD_OKAY, ADB.CMD_CLSE]);
+                if (pkt.cmd === ADB.CMD_CLSE) {
+                    throw new ADBError(`Service unavailable: ${service}`, ErrorType.PERMISSION_DENIED);
+                }
+                log(`Socket opened: local=${localId} remote=${pkt.arg0}`);
+                return { localId, remoteId: pkt.arg0 };
+            } catch (e) {
                 this.pendingPackets.delete(localId);
-                throw new ADBError(`Service unavailable: ${service}`, ErrorType.PERMISSION_DENIED);
+                throw e;
             }
-            
-            log(`Socket opened: local=${localId} remote=${pkt.arg0}`);
-            return { localId, remoteId: pkt.arg0 };
         }
 
         async writeSocket(sock, data) {
-            await this.send(makePacket(ADB.CMD_WRTE, sock.localId, sock.remoteId, data));
-            const pkt = await this.waitPacket(sock.localId, [ADB.CMD_OKAY, ADB.CMD_CLSE]);
-            return pkt.cmd === ADB.CMD_OKAY;
+            const max = Math.max(1, this.maxPayload);
+            if (data.length === 0) return true;
+            for (let off = 0; off < data.length; off += max) {
+                await this.send(makePacket(ADB.CMD_WRTE, sock.localId, sock.remoteId, data.subarray(off, off + max)));
+                const pkt = await this.waitPacket(sock.localId, [ADB.CMD_OKAY, ADB.CMD_CLSE]);
+                if (pkt.cmd !== ADB.CMD_OKAY) return false;
+            }
+            return true;
         }
 
-        async readSocket(sock) {
-            const pkt = await this.waitPacket(sock.localId, [ADB.CMD_WRTE, ADB.CMD_CLSE]);
+        async readSocket(sock, timeout = 30000) {
+            const pkt = await this.waitPacket(sock.localId, [ADB.CMD_WRTE, ADB.CMD_CLSE], timeout);
             if (pkt.cmd === ADB.CMD_CLSE) return null;
             await this.send(makePacket(ADB.CMD_OKAY, sock.localId, sock.remoteId));
             return pkt.payload;
@@ -858,20 +1067,72 @@
             this.pendingPackets.delete(sock.localId);
         }
 
+        /**
+         * Run a shell command and return its (trimmed) combined output.
+         * `timeout` is the maximum idle time between output chunks.
+         */
         async shell(cmd, timeout = 30000) {
             log('Shell:', cmd);
+            this.stats.commands++;
             const sock = await this.openSocket(`shell:${cmd}`);
+            const dec = new TextDecoder();
             let output = '';
             try {
                 while (true) {
-                    const data = await this.readSocket(sock);
+                    const data = await this.readSocket(sock, timeout);
                     if (!data) break;
-                    output += decoder.decode(data);
+                    output += dec.decode(data, { stream: true });
                 }
+                output += dec.decode();
             } finally {
                 await this.closeSocket(sock);
             }
             return output.trim();
+        }
+
+        /** Run a command and also report its exit status. Resolves to { output, code }. */
+        async shellWithStatus(cmd, timeout = 30000) {
+            const marker = '__ADBAUD_RC__';
+            const raw = await this.shell(`${cmd}; echo ${marker}$?`, timeout);
+            const idx = raw.lastIndexOf(marker);
+            if (idx < 0) return { output: raw, code: null };
+            return { output: raw.slice(0, idx).trim(), code: parseInt(raw.slice(idx + marker.length), 10) };
+        }
+
+        /**
+         * Start a long-running command (logcat, ...) and stream decoded text to `onChunk`.
+         * Returns { stop(), done } - `done` settles when the stream ends.
+         */
+        async streamShell(cmd, onChunk) {
+            const sock = await this.openSocket(`shell:${cmd}`);
+            const dec = new TextDecoder();
+            let stopped = false;
+            const done = (async () => {
+                try {
+                    while (!stopped && !this.connectionLost) {
+                        let data;
+                        try {
+                            data = await this.readSocket(sock, 1000);
+                        } catch (e) {
+                            if (e.type === ErrorType.TIMEOUT && !stopped) continue;
+                            if (stopped) break;
+                            throw e;
+                        }
+                        if (!data) break;
+                        const text = dec.decode(data, { stream: true });
+                        if (text) onChunk(text);
+                    }
+                } finally {
+                    await this.closeSocket(sock);
+                }
+            })();
+            return {
+                done,
+                stop: async () => {
+                    stopped = true;
+                    await done.catch(() => {});
+                }
+            };
         }
 
         async listDirectory(path) {
@@ -885,23 +1146,35 @@
             }
         }
 
-        async pullFile(path, onProgress = null) {
-            log('Pull file:', path);
+        async statFile(path) {
             const sock = await this.openSocket('sync:');
             const sync = new SyncSession(this, sock);
             try {
-                return await sync.pull(path, onProgress);
+                return await sync.stat(path);
             } finally {
                 await this.closeSocket(sock);
             }
         }
 
-        async pushFile(path, data, mode = 0o644) {
+        async pullFile(path, onProgress = null) {
+            log('Pull file:', path);
+            const sock = await this.openSocket('sync:');
+            const sync = new SyncSession(this, sock);
+            try {
+                let total = 0;
+                try { total = (await sync.stat(path)).size; } catch { /* size is only used for progress */ }
+                return await sync.pull(path, onProgress ? (n) => onProgress(n, total) : null);
+            } finally {
+                await this.closeSocket(sock);
+            }
+        }
+
+        async pushFile(path, data, mode = 0o644, onProgress = null) {
             log('Push file:', path);
             const sock = await this.openSocket('sync:');
             const sync = new SyncSession(this, sock);
             try {
-                return await sync.push(path, data, mode);
+                return await sync.push(path, data, mode, onProgress);
             } finally {
                 await this.closeSocket(sock);
             }
@@ -925,27 +1198,51 @@
             const result = new Uint8Array(total);
             let off = 0;
             for (const c of chunks) { result.set(c, off); off += c.length; }
+            if (total < 8 || result[0] !== 0x89 || result[1] !== 0x50) {
+                throw new ADBError('Screenshot failed: device returned no image (screen may be secure/locked).', ErrorType.UNKNOWN);
+            }
             return new Blob([result], { type: 'image/png' });
         }
 
         async getDeviceProps() {
             const props = {};
-            const cmds = {
-                model: 'getprop ro.product.model',
-                brand: 'getprop ro.product.brand',
-                device: 'getprop ro.product.device',
-                androidVersion: 'getprop ro.build.version.release',
-                sdkVersion: 'getprop ro.build.version.sdk',
-                serial: 'getprop ro.serialno',
-                buildId: 'getprop ro.build.id'
+            const keys = {
+                model: 'ro.product.model',
+                brand: 'ro.product.brand',
+                manufacturer: 'ro.product.manufacturer',
+                device: 'ro.product.device',
+                androidVersion: 'ro.build.version.release',
+                sdkVersion: 'ro.build.version.sdk',
+                serial: 'ro.serialno',
+                buildId: 'ro.build.id',
+                securityPatch: 'ro.build.version.security_patch',
+                fingerprint: 'ro.build.fingerprint',
+                cpuAbi: 'ro.product.cpu.abi',
+                buildType: 'ro.build.type',
+                buildTags: 'ro.build.tags',
+                bootloaderLocked: 'ro.boot.flash.locked',
+                verifiedBoot: 'ro.boot.verifiedbootstate',
+                debuggable: 'ro.debuggable',
+                selinuxMode: 'ro.boot.selinux'
             };
-            for (const [k, cmd] of Object.entries(cmds)) {
-                try { props[k] = await this.shell(cmd); } catch { props[k] = 'Unknown'; }
+            // one round-trip instead of one per property
+            const script = Object.entries(keys).map(([k, p]) => `echo "${k}=$(getprop ${p})"`).join('; ');
+            let out = '';
+            try { out = await this.shell(script); } catch { /* fall through to Unknown */ }
+            const parsed = {};
+            for (const line of out.split('\n')) {
+                const i = line.indexOf('=');
+                if (i > 0) parsed[line.slice(0, i)] = line.slice(i + 1).trim();
             }
+            for (const k of Object.keys(keys)) props[k] = parsed[k] || (k === 'serial' ? (this.device?.serialNumber || 'Unknown') : 'Unknown');
             try {
                 const bat = await this.shell('dumpsys battery');
                 const m = bat.match(/level:\s*(\d+)/);
-                props.batteryLevel = m ? parseInt(m[1]) : null;
+                props.batteryLevel = m ? parseInt(m[1], 10) : null;
+                const t = bat.match(/temperature:\s*(\d+)/);
+                props.batteryTemp = t ? parseInt(t[1], 10) / 10 : null;
+                const st = bat.match(/status:\s*(\d+)/);
+                props.charging = st ? st[1] === '2' : null;
             } catch { props.batteryLevel = null; }
             return props;
         }
@@ -956,17 +1253,22 @@
             return out.split('\n').filter(l => l.startsWith('package:')).map(l => l.substring(8).trim()).filter(Boolean).sort();
         }
 
-        async getApkPath(pkg) {
-            log('Getting APK path for:', pkg);
-            const out = await this.shell(`pm path ${pkg}`);
-            log('pm path output:', out);
+        /** All APK paths of a package (base + splits). */
+        async getApkPaths(pkg) {
+            if (!ABUtils.isValidPackageName(pkg)) {
+                throw new ADBError(`Invalid package name: ${pkg}`, ErrorType.NOT_FOUND);
+            }
+            const out = await this.shell(`pm path ${ABUtils.shQuote(pkg)}`);
             const lines = out.split('\n').filter(l => l.startsWith('package:'));
             if (lines.length === 0) {
                 throw new ADBError(`No APK found for package: ${pkg}`, ErrorType.NOT_FOUND);
             }
-            const path = lines[0].substring(8).trim();
-            log('APK path:', path);
-            return path;
+            return lines.map(l => l.substring(8).trim());
+        }
+
+        async getApkPath(pkg) {
+            log('Getting APK path for:', pkg);
+            return (await this.getApkPaths(pkg))[0];
         }
 
         async pullApk(pkg, onProgress = null) {
@@ -984,8 +1286,8 @@
             this.device = null;
             this.deviceDescriptor = null;
             this.pendingPackets.clear();
-            this.readBuffer = new Uint8Array(0);
-            
+            this._resetBuffer();
+
             if (this._disconnectedResolve) {
                 this._disconnectedResolve('User disconnected');
             }
@@ -997,7 +1299,7 @@
 
         async ping() {
             try {
-                await this.shell('echo ping');
+                await this.shell('echo ping', 5000);
                 return true;
             } catch (e) {
                 return false;
@@ -1020,7 +1322,8 @@
         constructor(adb, sock) {
             this.adb = adb;
             this.sock = sock;
-            this.buffer = new Uint8Array(0);
+            this._chunks = [];
+            this._len = 0;
         }
 
         async writeCmd(id, arg) {
@@ -1043,30 +1346,53 @@
         }
 
         async readBytes(len) {
-            while (this.buffer.length < len) {
+            while (this._len < len) {
                 const data = await this.adb.readSocket(this.sock);
                 if (!data) {
                     throw new ADBError('Sync connection closed unexpectedly', ErrorType.CONNECTION_LOST);
                 }
-                const combined = new Uint8Array(this.buffer.length + data.length);
-                combined.set(this.buffer, 0);
-                combined.set(data, this.buffer.length);
-                this.buffer = combined;
+                this._chunks.push(data);
+                this._len += data.length;
             }
-            const result = this.buffer.slice(0, len);
-            this.buffer = this.buffer.slice(len);
-            return result;
+            const out = new Uint8Array(len);
+            let off = 0;
+            while (off < len) {
+                const c = this._chunks[0];
+                const take = Math.min(c.length, len - off);
+                out.set(c.subarray(0, take), off);
+                off += take;
+                if (take === c.length) this._chunks.shift();
+                else this._chunks[0] = c.subarray(take);
+            }
+            this._len -= len;
+            return out;
+        }
+
+        async _readFail(len) {
+            return decoder.decode(await this.readBytes(len));
+        }
+
+        /** STAT (v1): returns { mode, size, mtime, exists }. */
+        async stat(path) {
+            await this.writeCmd('STAT', path);
+            const resp = await this.readBytes(16);
+            const v = new DataView(resp.buffer, resp.byteOffset);
+            if (syncIdStr(v.getUint32(0, true)) !== 'STAT') {
+                throw new ADBError('Unexpected STAT response', ErrorType.PROTOCOL_ERROR);
+            }
+            const mode = v.getUint32(4, true);
+            return { mode, size: v.getUint32(8, true), mtime: new Date(v.getUint32(12, true) * 1000), exists: mode !== 0 };
         }
 
         async list(path) {
             await this.writeCmd('LIST', path);
             const entries = [];
-            
+
             while (true) {
                 const idBytes = await this.readBytes(4);
                 const idVal = new DataView(idBytes.buffer, idBytes.byteOffset).getUint32(0, true);
                 const id = syncIdStr(idVal);
-                
+
                 if (id === 'DENT') {
                     const meta = await this.readBytes(16);
                     const mv = new DataView(meta.buffer, meta.byteOffset);
@@ -1077,12 +1403,13 @@
                     const nameBytes = await this.readBytes(nameLen);
                     const name = decoder.decode(nameBytes);
                     if (name !== '.' && name !== '..') {
+                        const type = mode & 0o170000;
                         entries.push({
                             name, mode, size,
                             mtime: new Date(mtime * 1000),
-                            isDirectory: (mode & 0o040000) !== 0,
-                            isFile: (mode & 0o100000) !== 0,
-                            isLink: (mode & 0o120000) === 0o120000
+                            isDirectory: type === 0o040000,
+                            isFile: type === 0o100000,
+                            isLink: type === 0o120000
                         });
                     }
                 } else if (id === 'DONE') {
@@ -1090,13 +1417,13 @@
                 } else if (id === 'FAIL') {
                     const lenBytes = await this.readBytes(4);
                     const msgLen = new DataView(lenBytes.buffer, lenBytes.byteOffset).getUint32(0, true);
-                    const msg = decoder.decode(await this.readBytes(msgLen));
+                    const msg = await this._readFail(msgLen);
                     throw new ADBError('Directory access denied: ' + msg, ErrorType.PERMISSION_DENIED);
                 } else {
                     throw new ADBError('Unexpected sync response: ' + id, ErrorType.PROTOCOL_ERROR);
                 }
             }
-            
+
             log(`Listed ${entries.length} entries in ${path}`);
             return entries;
         }
@@ -1106,14 +1433,14 @@
             await this.writeCmd('RECV', path);
             const chunks = [];
             let totalSize = 0;
-            
+
             while (true) {
                 const header = await this.readBytes(8);
                 const hv = new DataView(header.buffer, header.byteOffset);
                 const idVal = hv.getUint32(0, true);
                 const len = hv.getUint32(4, true);
                 const id = syncIdStr(idVal);
-                
+
                 if (id === 'DATA') {
                     const chunk = await this.readBytes(len);
                     chunks.push(chunk);
@@ -1123,51 +1450,55 @@
                     log('Pull complete, total size:', totalSize);
                     break;
                 } else if (id === 'FAIL') {
-                    const msg = decoder.decode(await this.readBytes(len));
+                    const msg = await this._readFail(len);
                     throw new ADBError('File read failed: ' + msg, ErrorType.PERMISSION_DENIED);
                 } else {
                     throw new ADBError('Unexpected response: ' + id, ErrorType.PROTOCOL_ERROR);
                 }
             }
-            
+
             const result = new Uint8Array(totalSize);
             let off = 0;
             for (const c of chunks) { result.set(c, off); off += c.length; }
             return result;
         }
 
-        async push(path, data, mode) {
+        async push(path, data, mode, onProgress = null) {
             log('SEND:', path, 'size:', data.length);
             await this.writeCmd('SEND', `${path},${mode}`);
-            
-            const chunkSize = 64 * 1024;
+
+            // each DATA packet (8-byte header + chunk) must fit in one ADB WRTE payload
+            const chunkSize = Math.max(1, Math.min(SYNC_MAX_CHUNK, this.adb.maxPayload - 8));
             let off = 0;
             while (off < data.length) {
-                const chunk = data.slice(off, off + chunkSize);
+                const chunk = data.subarray(off, off + chunkSize);
                 const pkt = new Uint8Array(8 + chunk.length);
                 const v = new DataView(pkt.buffer);
                 v.setUint32(0, syncId('DATA'), true);
                 v.setUint32(4, chunk.length, true);
                 pkt.set(chunk, 8);
-                await this.adb.writeSocket(this.sock, pkt);
+                if (!(await this.adb.writeSocket(this.sock, pkt))) {
+                    throw new ADBError('Device closed the connection during upload', ErrorType.CONNECTION_LOST);
+                }
                 off += chunk.length;
+                if (onProgress) onProgress(off, data.length);
             }
-            
+
             const done = new Uint8Array(8);
             const dv = new DataView(done.buffer);
             dv.setUint32(0, syncId('DONE'), true);
             dv.setUint32(4, Math.floor(Date.now() / 1000), true);
             await this.adb.writeSocket(this.sock, done);
-            
+
             const header = await this.readBytes(8);
             const hv = new DataView(header.buffer, header.byteOffset);
             const id = syncIdStr(hv.getUint32(0, true));
             const len = hv.getUint32(4, true);
-            
+
             if (id === 'FAIL') {
-                throw new ADBError('File write failed: ' + decoder.decode(await this.readBytes(len)), ErrorType.PERMISSION_DENIED);
+                throw new ADBError('File write failed: ' + await this._readFail(len), ErrorType.PERMISSION_DENIED);
             }
-            
+
             log('Push complete');
             return true;
         }
@@ -1178,6 +1509,7 @@
     global.ADBErrorType = ErrorType;
     global.DeviceManager = DeviceManager;
     global.USBWatcher = USBWatcher;
+    global.ADBInternals = { makePacket, parseHeader, signAdbToken, generatePublicKey, parsePkcs8Rsa, pkcs1Sha1Block, bytesToBigInt, modPow, ADB };
     global.USBDeviceDescriptor = USBDeviceDescriptor;
     global.WebSocketDeviceDescriptor = WebSocketDeviceDescriptor;
     global.TCPDeviceDescriptor = TCPDeviceDescriptor;

@@ -1,0 +1,15 @@
+{
+  "name": "adbauditor",
+  "version": "2.0.0",
+  "description": "Browser-based Android security auditing platform (WebUSB + ADB). Created by Sandeep Wawdane; enhanced by 0x0806.",
+  "private": true,
+  "scripts": {
+    "test": "node --test --test-force-exit --test-timeout=20000 tests/",
+    "lint": "node scripts/check-syntax.js",
+    "serve": "python3 -m http.server 8080"
+  },
+  "engines": { "node": ">=18" },
+  "license": "CC-BY-NC-ND-4.0",
+  "author": "Sandeep Wawdane (original creator)",
+  "contributors": ["0x0806 (enhancements)"]
+}
