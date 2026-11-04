@@ -64,7 +64,12 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     const mockSrc = fs.readFileSync(path.join(ROOT, 'tests/helpers/mock-device.js'), 'utf8');
     const { dump } = require('../fixtures/dumpsys-package');
     const pageMock = fs.readFileSync(path.join(__dirname, 'page-mock.js'), 'utf8');
-    const boot = `(function(){var module={exports:{}};${mockSrc};window.__MOCK_MODULE=module.exports;})();window.__FIXTURES={dump:${JSON.stringify(dump())}};${pageMock}`;
+    const B = require('../helpers/apk-builder');
+    const apk = B.buildApk({ manifest: { targetSdk: 28 } }).toString('base64');
+    const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), 'abe2edb-'));
+    const pyOk = spawnSync('python3', [path.join(__dirname, '../helpers/make-sqlite.py'), dbDir]).status === 0;
+    const dbB64 = pyOk ? fs.readFileSync(path.join(dbDir, 'basic.db')).toString('base64') : '';
+    const boot = `(function(){var module={exports:{}};${mockSrc};window.__MOCK_MODULE=module.exports;})();window.__FIXTURES={dump:${JSON.stringify(dump())}};window.__APK_B64=${JSON.stringify(apk)};window.__DB_B64=${JSON.stringify(dbB64)};${pageMock}`;
     await send('Page.addScriptToEvaluateOnNewDocument', { source: boot });
     await send('Page.navigate', { url: base });
     await waitFor(`document.readyState==='complete' && !!window.app`, 'app loaded');
@@ -123,7 +128,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     await evalJs(`document.getElementById('fullScanSelect').value='com.example.app'; app.runFullScan()`);
     await waitFor(`document.querySelector('#fullScanResults .report-actions')`, 'scan finished', 30000);
     check('full scan report rendered with risk score', await evalJs(`/Risk:/.test(document.getElementById('fullScanResults').innerText)`));
-    check('17 test cards in report', await evalJs(`document.querySelectorAll('#fullScanResults .result-box').length===18`));
+    check('18 test cards in report', await evalJs(`document.querySelectorAll('#fullScanResults .result-box').length===19`));
     check('report persisted to scan history', await evalJs(`JSON.parse(localStorage.getItem('ab.scanHistory')).length===1`));
     await evalJs(`document.querySelector('#fullScanResults [data-export=md]') && true`);
 
@@ -155,6 +160,107 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     await evalJs(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'2',altKey:true,bubbles:true}))`);
     check('Alt+2 navigates to Apps', await evalJs(`document.querySelector('[data-section=apps]').classList.contains('active')`));
 
+
+    // ---- pinned apps
+    await evalJs(`document.querySelector('[data-section=apps]').click()`);
+    await waitFor(`document.querySelectorAll('#appList .app-item').length>=1`, 'apps again');
+    await evalJs(`app.filterApps(''); [...document.querySelectorAll('#appList [data-act=pin]')].find(b=>b.dataset.pkg==='com.bad.debuggable').click()`);
+    check('pinning an app moves it to the top', await evalJs(`document.querySelector('#appList .app-item .app-package').textContent==='com.bad.debuggable'`));
+
+    // ---- file browser extras
+    await evalJs(`document.querySelector('[data-section=files]').click()`);
+    await waitFor(`!!document.getElementById('fileFilter')`, 'files again');
+    await evalJs(`(function(){var f=document.getElementById('fileFilter');f.value='';f.dispatchEvent(new Event('input'));})()`);
+    await waitFor(`document.querySelectorAll('#fileList .file-item').length>=4`, 'files unfiltered');
+    check('file rows have a More menu', await evalJs(`!!document.querySelector('#fileList [data-act=more]')`));
+    await evalJs(`document.querySelector('#fileList .file-item[data-index="0"] [data-act=more]').click()`);
+    check('folder More menu offers ZIP download', await evalJs(`[...document.querySelectorAll('.ab-modal-foot button')].some(b=>/ZIP/.test(b.textContent))`));
+    await evalJs(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+
+    // ---- Tools section
+    await evalJs(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'7',altKey:true,bubbles:true}))`);
+    await waitFor(`!!document.querySelector('[data-ttab=control]')`, 'tools opened via Alt+7');
+    check('Tools has 8 tabs', await evalJs(`document.querySelectorAll('[data-ttab]').length===8`));
+    await evalJs(`document.querySelector('[data-do=radio][data-k=wifi][data-on="1"]').click()`);
+    await waitFor(`window.__shellLog.includes('svc wifi enable')`, 'wifi command sent');
+    check('Wi-Fi toggle sends svc command', true);
+    await evalJs(`document.querySelector('[data-do=reboot][data-mode=recovery]').click()`);
+    await waitFor(`!!document.querySelector('.ab-modal-overlay')`, 'reboot confirm');
+    await evalJs(`[...document.querySelectorAll('.ab-modal-foot button')].find(b=>b.textContent==='Cancel').click()`);
+    check('reboot requires confirmation and cancel sends nothing', await evalJs(`!window.__shellLog.some(c=>c.startsWith('reboot'))`));
+    await evalJs(`document.querySelector('[data-do=key][data-key=HOME]').click()`);
+    await waitFor(`window.__shellLog.includes('input keyevent 3')`, 'key event');
+    check('remote key sends input keyevent', true);
+
+    await evalJs(`document.querySelector('[data-ttab=intents]').click()`);
+    await evalJs(`document.getElementById('dlUri').value="myapp://x;reboot"; document.querySelector('[data-do=deeplink]').click()`);
+    await waitFor(`window.__shellLog.some(c=>c.startsWith('am start') && c.includes("'myapp://x;reboot'"))`, 'deep link fired');
+    check('deep link URI is passed as one quoted argument', true);
+    await evalJs(`document.getElementById('inAction').value='a.b'; document.getElementById('inComp').value='bad comp'; document.querySelector('[data-do=intentPreview]').click()`);
+    check('intent launcher rejects a malformed component', await evalJs(`/Invalid component/.test(document.getElementById('toolsOut').textContent)`));
+
+    await evalJs(`document.querySelector('[data-ttab=packages]').click()`);
+    await waitFor(`document.querySelectorAll('#pkSel option').length>1`, 'package list');
+    await evalJs(`document.querySelector('[data-do=baselineSave]').click()`);
+    await waitFor(`/Baseline saved/.test(document.getElementById('toolsOut').textContent)`, 'baseline saved');
+    await evalJs(`document.querySelector('[data-do=baselineCompare]').click()`);
+    await waitFor(`/Baseline from/.test(document.getElementById('toolsOut').textContent)`, 'baseline compared');
+    check('baseline save + compare works', true);
+
+    await evalJs(`document.querySelector('[data-ttab=system]').click()`);
+    await evalJs(`document.querySelector('[data-do=settingsLoad]').click()`);
+    await waitFor(`document.querySelectorAll('#seTable tbody tr').length===3`, 'settings listed');
+    await evalJs(`document.querySelector('[data-do=propsLoad]').click()`);
+    await waitFor(`document.querySelectorAll('#prTable tbody tr').length===2`, 'props listed');
+    await evalJs(`document.querySelector('[data-do=dsList]').click()`);
+    await waitFor(`document.querySelectorAll('#dsSvc option').length===2`, 'dumpsys services');
+    await evalJs(`document.querySelector('[data-do=dsRun]').click()`);
+    await waitFor(`/level: 88/.test(document.getElementById('toolsOut').textContent)`, 'dumpsys output');
+    check('system tab: settings, properties and dumpsys explorer work', true);
+
+    await evalJs(`document.querySelector('[data-ttab=network]').click()`);
+    await evalJs(`document.querySelector('[data-do=netInfo]').click()`);
+    await waitFor(`/192.168.1.20/.test(document.getElementById('netInfo').textContent)`, 'network info');
+    await evalJs(`document.getElementById('pxHost').value='192.168.1.10'; document.querySelector('[data-do=pxSet]').click()`);
+    await waitFor(`!!document.querySelector('.ab-modal-overlay')`, 'proxy confirm');
+    await evalJs(`[...document.querySelectorAll('.ab-modal-foot button')].find(b=>/Set proxy/.test(b.textContent)).click()`);
+    await waitFor(`window.__shellLog.includes("settings put global http_proxy '192.168.1.10:8080'")`, 'proxy set');
+    await evalJs(`document.querySelector('[data-do=pxClear]').click()`);
+    await waitFor(`/http_proxy is now: :0/.test(document.getElementById('toolsOut').textContent)`, 'proxy cleared');
+    check('proxy set/clear works and clear is verified', true);
+
+    await evalJs(`document.querySelector('[data-ttab=diag]').click()`);
+    await evalJs(`document.querySelector('[data-do=logSnap]').click()`);
+    await waitFor(`/snapshot line/.test(document.getElementById('toolsOut').textContent)`, 'log snapshot');
+    await evalJs(`document.querySelector('[data-do=evidence]').click()`);
+    await waitFor(`JSON.parse(localStorage.getItem('ab.activityLog')).some(e=>e.action==='evidence-pack')`, 'evidence pack', 30000);
+    check('log snapshot and evidence pack work', true);
+
+    await evalJs(`document.querySelector('[data-ttab=apk]').click()`);
+    await waitFor(`document.querySelectorAll('#apkSel option').length>1`, 'apk app list');
+    await evalJs(`document.getElementById('apkSel').value='com.example.app'; document.querySelector('[data-do=apkDevice]').click()`);
+    await waitFor(`!!document.querySelector('#apkReport .result-box')`, 'apk analysed', 30000);
+    check('APK analyzer: manifest parsed from the pulled APK', await evalJs(`/com\\.example\\.app/.test(document.getElementById('apkReport').innerText) && /debuggable/i.test(document.getElementById('apkReport').innerText)`));
+    check('APK analyzer: dex indicators and exported components shown', await evalJs(`/Exported components/.test(document.getElementById('apkReport').innerText) && /DEX indicators/.test(document.getElementById('apkReport').innerText)`));
+    check('APK analyzer never prints the raw secret', await evalJs(`!document.getElementById('apkReport').innerText.includes('AKIAABCDEFGHIJKLMNOP')`));
+
+    if (pyOk) {
+        await evalJs(`document.querySelector('[data-ttab=db]').click()`);
+        await evalJs(`document.getElementById('dbPath').value='/sdcard/test.db'; document.querySelector('[data-do=dbDevice]').click()`);
+        await waitFor(`document.querySelectorAll('[data-do=dbTable]').length===2`, 'db opened');
+        await evalJs(`[...document.querySelectorAll('[data-do=dbTable]')].find(b=>b.dataset.t==='users').click()`);
+        check('SQLite viewer lists tables and rows', await evalJs(`document.querySelectorAll('#dbView tbody tr').length===12 && /alice/.test(document.getElementById('dbView').innerText)`));
+    }
+
+    // ---- settings, theme, activity log
+    await evalJs(`document.getElementById('settingsBtn').click()`);
+    await evalJs(`document.querySelector('[data-theme-set=light]').click()`);
+    check('light theme applied and persisted', await evalJs(`document.documentElement.dataset.theme==='light' && JSON.parse(localStorage.getItem('ab.theme'))==='light'`));
+    await evalJs(`document.querySelector('[data-theme-set=dark]').click()`);
+    await evalJs(`[...document.querySelectorAll('.ab-modal-foot button')].find(b=>b.textContent==='Close').click()`);
+    check('activity log recorded actions', await evalJs(`JSON.parse(localStorage.getItem('ab.activityLog')).length>8`));
+    check('all design tokens are defined', await evalJs(`['--danger','--success','--warning','--primary','--surface-2','--lum-40','--lum-60'].every(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim()!=='')`));
+
     // ---- disconnect via unplug
     await evalJs(`window.__dev.unplug()`);
     await waitFor(`document.getElementById('statusText').textContent==='Disconnected'`, 'disconnect detected');
@@ -164,6 +270,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     const noisy = logs.filter(l => !/favicon|fonts\.g|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|Failed to load resource/.test(l) && !/\[ADB ERROR\]/.test(l));
     check('no console errors', noisy.length === 0, noisy.join(' | '));
 
+    try { fs.rmSync(dbDir, { recursive: true, force: true }); } catch (e) {}
     cleanup();
     console.log(failures ? `\n${failures} check(s) FAILED` : '\nAll e2e checks passed');
     process.exit(failures ? 1 : 0);

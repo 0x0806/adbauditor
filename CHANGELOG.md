@@ -1,5 +1,87 @@
 # Changelog
 
+## 2.1.0 - more enhancements by 0x0806
+
+Items continue the numbering of 2.0.0. Everything listed is implemented and covered by `npm test`
+(114 unit tests) and/or `npm run test:e2e` (headless Chromium, fake WebUSB device). Features marked
+*(heuristic)* pattern-match strings and can produce false positives/negatives. Protocol and device
+control code is verified against mock devices, not physical hardware.
+
+### Offline APK static analyzer (`js/apk-analyzer.js`)
+77. ZIP reader (central directory, correct local-header data offsets, deflate).
+78. Binary `AndroidManifest.xml` decoder (UTF-8 and UTF-16 string pools; attributes identified by platform resource IDs so obfuscated builds still decode).
+79. Manifest security findings, including implicit-export rules (intent-filter / provider defaults), debuggable, backup, cleartext, old SDK levels, unprotected providers/services.
+80. Signing analysis: v1 (JAR) certificates and the v2/v3 APK Signing Block, with certificate subject, issuer, validity, algorithm, key size and SHA-256 fingerprint.
+81. Debug-certificate, weak-signature-algorithm and short-RSA-key detection.
+82. DEX string-table scanner: URLs, IP addresses and hard-coded secrets (AWS, Google, Slack, GitHub, Stripe, JWT, private keys, Firebase URLs), always masked.
+83. Risky API hints from DEX strings *(heuristic)*.
+84. Tracker / analytics SDK detection *(heuristic)*.
+85. Framework (Flutter, React Native, Unity, Xamarin, Cordova...), native ABI/library and embedded-code detection.
+86. APK SHA-256 / SHA-1 hashes.
+87. Analyzer UI: pull from the device or drop a local file; JSON and Markdown export.
+88. "Analyze APK" from the file browser menu.
+
+### SQLite viewer (`js/sqlite-reader.js`)
+89. Read-only SQLite reader (table b-trees, overflow pages, every serial type) verified row-for-row against Python's `sqlite3`.
+90. WAL overlay so rows that only exist in the `-wal` file are not missed.
+91. UTF-16 databases.
+92. Viewer UI: table list, pagination, schema, CSV export (formula-injection safe).
+93. "Open in DB viewer" from the file browser; the `-wal` file is pulled automatically.
+94. SharedPreferences preview shows parsed `key = value` pairs.
+95. File previews warn about masked secrets found in the content.
+
+### New audit checks
+96. Device exposure: encryption state, screen lock, developer options, USB debugging, unknown sources, Play Protect / ADB install verification.
+97. Device administrator inventory.
+98. User-installed CA certificate detection (root).
+99. Xposed-family framework detection.
+100. Triage: filter apps by granted permission; permissions in the CSV export.
+
+### Device toolkit (`js/toolkit.js`, Tools section)
+Every value is validated and single-quoted; state-changing actions ask for confirmation. Tests assert the exact command strings, using a real shell to parse them.
+101. Reboot (system / recovery / bootloader).
+102. Wi-Fi, Bluetooth, mobile data and airplane-mode switches.
+103. Remote keys (Home, Back, Recents, volume, D-pad...).
+104. Tap and swipe injection.
+105. Text input.
+106. Brightness.
+107. Open URL on the device.
+108. Intent launcher (activity / service / broadcast) with typed extras and command preview.
+109. Deep-link tester (BROWSABLE VIEW intent, optional package restriction).
+110. Content-provider query.
+111. Grant / revoke runtime permissions.
+112. Enable / disable apps.
+113. AppOps viewer.
+114. Force-stop and kill-by-PID.
+115. Installed-app baseline and drift report (added, removed, updated, installer changed).
+116. Settings viewer / editor (system, secure, global).
+117. System property browser with filter and JSON export.
+118. Dumpsys explorer with output search.
+119. Log-buffer snapshots (main, system, crash, events, radio).
+120. Process (`top`) snapshot and storage summary.
+121. Network info: addresses, routes, DNS, HTTP proxy, private DNS.
+122. HTTP proxy set / clear (clear is verified by reading the value back).
+123. Screen recording to MP4.
+124. Evidence pack: device info, properties, packages, network info, log snapshot, scan history/last report, activity log and screenshot in one ZIP.
+
+### UX
+125. Pin apps to the top of the list.
+126. Download a folder as a ZIP.
+127. Recursive file search.
+128. MD5 / SHA-1 / SHA-256 checksums for device files.
+129. File info (`stat`).
+130. Text editor with save-back to the device (with confirmation).
+131. Light, dark and system themes.
+132. Settings panel: forget the stored ADB key, clear saved data.
+133. Activity log (connects, scans, file operations, shell commands) with export - a local evidence trail, never uploaded.
+134. Tools section (Alt+7) built on a small section/command registry; every tool is also in the command palette.
+135. Fixed 13 CSS design tokens that were referenced but never defined (`--danger`, `--success`, `--warning`, `--primary`, `--surface-2`, `--lum-40`...), which left several colours and the progress bars unstyled.
+
+### Engineering
+- Test suite grew from 61 to 114 unit tests plus an expanded end-to-end run; test fixtures are generated (a binary-manifest/DEX/ZIP builder validated with `aapt`, Python-generated SQLite databases, OpenSSL certificates). Real-APK smoke tests are opt-in via `ADBAUD_APK_DIR`.
+- Fixed CI on Node 22 (explicit test glob).
+- Service worker cache bumped and new modules precached.
+
 ## 2.0.0 - enhancements by 0x0806
 
 Original project by **Sandeep Wawdane**. Every item below was implemented and is covered by

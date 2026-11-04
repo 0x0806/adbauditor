@@ -120,6 +120,34 @@ watcher.onDeviceDisconnected = (device) => { ... };
 watcher.start();
 ```
 
+## APK Analyzer (`ApkAnalyzer`, `js/apk-analyzer.js`)
+
+```javascript
+const report = await ApkAnalyzer.analyzeApk(uint8Array);   // never throws for a partly broken APK; see report.warnings
+report.manifest;   // package, versions, sdk, permissions, application flags, components (with implicit export resolution)
+report.findings;   // [{ severity, id, title, detail, recommendation }]
+report.signing;    // { v1, schemes, certs[], notes[], findings[] }
+report.dex;        // { urls, ips, secrets (masked), apis (heuristic), trackers (heuristic) }
+ApkAnalyzer.apkReportToMarkdown(report, 'name.apk');
+```
+
+Lower-level pieces: `ZipReader`, `decodeAxml`, `readDexStrings`, `parseCertificate`, `parseSigningBlock`.
+
+## SQLite reader (`SqliteDb`, `js/sqlite-reader.js`)
+
+```javascript
+const db = new SqliteDb(dbBytes, walBytes /* optional */);
+db.tables();                          // [{ name, sql, columns, withoutRowid, virtual }]
+db.rows('users', { limit: 100, offset: 0 });   // { columns, rows, hasMore, note }
+db.count('users');
+```
+
+WITHOUT ROWID and virtual tables are reported, not read.
+
+## Device toolkit (`DeviceToolkit`, `js/toolkit.js`)
+
+Validated, single-quoted wrappers: `reboot`, `setWifi/Bluetooth/MobileData/Airplane`, `keyEvent`, `tap`, `swipe`, `typeText`, `openUrl`, `buildIntentCommand` / `sendIntent`, `buildProviderQuery` / `queryProvider`, `grantPermission` / `revokePermission`, `setAppEnabled`, `listSettings` / `putSetting`, `listProps`, `dumpsys`, `logSnapshot`, `networkInfo`, `setProxy` / `clearProxy`, `screenRecord`, `packageSnapshot` and `DeviceToolkit.diffSnapshots`. Invalid input throws before anything is sent to the device.
+
 ## Security Auditor Module
 
 ### SecurityAuditor
@@ -133,7 +161,7 @@ const results = await auditor.runFullAudit('com.example.app');
 
 #### Audit Categories
 
-`runFullAudit(pkg, onProgress, { includeDevice })` returns `{ packageName, timestamp, durationMs, summary, tests, riskScore }`. Included tests: local storage (incl. world-readable files), backup, logs (secret scanning), exported components, deep links, intent filters, WebView, debuggable, SDK levels, signature scheme, install source, network security, auth storage, permissions, plus device posture, root and emulator indicators.
+`runFullAudit(pkg, onProgress, { includeDevice })` returns `{ packageName, timestamp, durationMs, summary, tests, riskScore }`. Additional device-level checks: `testDeviceExposure()` (encryption, lock screen, developer options, Play Protect, device admins, user CAs). Included tests: local storage (incl. world-readable files), backup, logs (secret scanning), exported components, deep links, intent filters, WebView, debuggable, SDK levels, signature scheme, install source, network security, auth storage, permissions, plus device posture, root and emulator indicators.
 
 Other entry points: `runDeviceAudit()`, `triageApps(packages, onProgress, concurrency)`, `getAppInfo()`, `getActiveConnections()`, `getRunningProcesses()`, `SecurityAuditor.scanForSecrets(text)`.
 

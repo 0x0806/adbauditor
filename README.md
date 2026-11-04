@@ -34,7 +34,11 @@ ADB Auditor is a browser-based Android security auditing tool designed for penet
 ## Credits
 
 - **Original author: Sandeep Wawdane** ([@thecybersandeep](https://github.com/thecybersandeep)) - created ADB Auditor, its WebUSB/ADB architecture and UI. Original repository: https://github.com/thecybersandeep/adbauditor
-- **v2.0 enhancements: 0x0806** ([@0x0806](https://github.com/0x0806)) - hardened protocol core, rewritten auditor, new tools, tests, accessibility and docs. See [CHANGELOG.md](CHANGELOG.md) (76 itemised changes) and [NOTICE.md](NOTICE.md).
+- **v2.0 enhancements: 0x0806** ([@0x0806](https://github.com/0x0806)) - hardened protocol core, rewritten auditor, new tools, tests, accessibility and docs. See [CHANGELOG.md](CHANGELOG.md) (135 itemised changes across 2.0 and 2.1) and [NOTICE.md](NOTICE.md).
+
+## What's new in 2.1
+
+An offline **APK static analyzer** (manifest, signing certificates, DEX indicators), a **SQLite viewer** with WAL support, a **Tools** section (intent launcher, deep-link tester, provider queries, permissions, settings, proxy, screen recording, evidence pack, baseline drift), device-exposure checks, folder ZIP / search / checksum / editor in the file browser, themes, and an activity log. Details in the [changelog](CHANGELOG.md).
 
 ## What's new in 2.0
 
@@ -54,6 +58,9 @@ Safer (injection/XSS fixes, CSP), more reliable (serialised USB transport, real 
 | 🧭 **App Triage** | Rank every installed app by risk (debuggable, backup, SDK levels, permissions) |
 | 🛡️ **Device Posture** | Patch age, bootloader, verified boot, SELinux, ADB-over-network, accessibility services |
 | 📝 **Reports** | Risk score, history/diff, export as JSON, Markdown, HTML or CSV |
+| 🔬 **APK Analyzer** | Offline manifest, signing and DEX analysis of any APK |
+| 🗃️ **SQLite Viewer** | Browse app databases (including WAL) in the browser |
+| 🧰 **Tools** | Intents, providers, permissions, settings, proxy, screen recording, evidence pack |
 | ⌨️ **Command Palette** | `Ctrl/Cmd+K` to jump anywhere; full keyboard navigation |
 | 📴 **Offline** | Installable PWA; works without a network after the first load |
 
@@ -167,6 +174,10 @@ adbauditor/
 │   ├── utils.js            # Shared pure helpers (quoting, parsing, ZIP, reports)
 │   ├── adb-core.js         # ADB protocol implementation
 │   ├── security-auditor.js # Security scanning module
+│   ├── apk-analyzer.js     # Offline APK static analysis
+│   ├── sqlite-reader.js    # Read-only SQLite reader
+│   ├── toolkit.js          # Validated device-control commands
+│   ├── tools-ui.js         # Tools section UI, settings, theme
 │   ├── app.js              # Main application logic
 │   └── register-sw.js      # Service worker registration
 ├── tests/                  # node:test unit tests, mock ADB device, Chromium e2e
@@ -181,7 +192,7 @@ adbauditor/
 
 | Shortcut | Action |
 |----------|--------|
-| `Alt + 1-6` | Switch section |
+| `Alt + 1-7` | Switch section |
 | `Alt + R` | Refresh current view |
 | `Alt + D` | Disconnect device |
 | `Ctrl/Cmd + K` | Command palette |
@@ -193,11 +204,11 @@ adbauditor/
 
 ```bash
 npm run lint       # syntax check
-npm test           # 61 unit tests (mock ADB device, auditor fixtures, helpers)
+npm test           # 114 unit tests (mock ADB device, auditor, APK analyzer, SQLite, toolkit)
 npm run test:e2e   # headless Chromium with a fake WebUSB device
 ```
 
-Protocol code is tested against a scriptable mock device, not physical hardware.
+Protocol and device-control code is tested against a scriptable mock device, not physical hardware. Set `ADBAUD_APK_DIR` to a folder of your own APKs to smoke-test the analyzer on real files.
 
 ## Privacy & Security
 

@@ -1,6 +1,6 @@
 /* ADB Auditor service worker - offline support. Enhanced by 0x0806 (original project by Sandeep Wawdane). */
-const CACHE = 'adbauditor-v2.0.0';
-const ASSETS = ['./', 'index.html', 'js/utils.js', 'js/adb-core.js', 'js/security-auditor.js', 'js/app.js', 'img/logo.svg', 'manifest.webmanifest', '404.html'];
+const CACHE = 'adbauditor-v2.1.0';
+const ASSETS = ['./', 'index.html', 'js/utils.js', 'js/adb-core.js', 'js/security-auditor.js', 'js/sqlite-reader.js', 'js/apk-analyzer.js', 'js/toolkit.js', 'js/app.js', 'js/tools-ui.js', 'js/register-sw.js', 'img/logo.svg', 'manifest.webmanifest', '404.html'];
 
 self.addEventListener('install', (event) => {
     event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

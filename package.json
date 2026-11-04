@@ -1,6 +1,6 @@
 {
   "name": "adbauditor",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Browser-based Android security auditing platform (WebUSB + ADB). Created by Sandeep Wawdane; enhanced by 0x0806.",
   "private": true,
   "scripts": {

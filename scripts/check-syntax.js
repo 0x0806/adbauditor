@@ -4,7 +4,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const root = path.resolve(__dirname, '..');
-const files = [...fs.readdirSync(path.join(root, 'js')).map(f => 'js/' + f), 'sw.js', ...fs.readdirSync(path.join(root, 'tests')).filter(f => f.endsWith('.js')).map(f => 'tests/' + f)];
+const files = [...fs.readdirSync(path.join(root, 'js')).map(f => 'js/' + f), 'sw.js', ...fs.readdirSync(path.join(root, 'tests')).filter(f => f.endsWith('.js')).map(f => 'tests/' + f), 'tests/helpers/apk-builder.js', 'tests/helpers/mock-device.js', 'tests/e2e/run.js'];
 let bad = 0;
 for (const f of files.filter(f => f.endsWith('.js'))) {
     const r = spawnSync(process.execPath, ['--check', path.join(root, f)], { encoding: 'utf8' });

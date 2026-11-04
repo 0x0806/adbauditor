@@ -124,6 +124,21 @@
             orb.classList.toggle('active', active);
         });
     }
+    const sectionHooks = {};
+    const extraCommands = [];
+
+    /* ---------- activity log (local audit trail of what was done in this session) ---------- */
+    const activity = {
+        entries: store.get('activityLog', []),
+        add(action, detail = '') {
+            this.entries.push({ t: new Date().toISOString(), action, detail: String(detail).slice(0, 500) });
+            if (this.entries.length > 300) this.entries.splice(0, this.entries.length - 300);
+            store.set('activityLog', this.entries);
+        },
+        clear() { this.entries = []; store.set('activityLog', []); },
+        toText() { return this.entries.map(e => `${e.t}  ${e.action}${e.detail ? '  ' + e.detail : ''}`).join('\n'); }
+    };
+
     const templates = {
         welcome: `
             <div class="landing-page">
@@ -424,6 +439,9 @@
                             Upload
                         </button>
                         <input type="file" id="fileUploadInput" multiple style="display:none" onchange="app.handleFileUpload(event)">
+                        <button class="btn btn-ghost" onclick="app.searchFiles()" title="Search subfolders by name">
+                            Search
+                        </button>
                         <button class="btn btn-ghost" onclick="app.makeDirectory()" title="Create folder">
                             New folder
                         </button>
@@ -695,6 +713,7 @@
                 <div class="form-row">
                     <label class="root-toggle"><input type="checkbox" id="triageSystem"><span class="toggle-slider"></span><span class="toggle-label">Include system apps</span></label>
                     <button class="btn btn-primary" onclick="app.runTriage()">Run triage</button>
+                    <select id="triagePerm" aria-label="Filter by granted permission" onchange="app.renderTriage()"><option value="">All permissions</option></select>
                     <span id="triageStatus" style="color:var(--lum-50);font-size:12px"></span>
                 </div>
                 <div style="background:var(--surface-2);border-radius:4px;height:4px;overflow:hidden;margin-top:8px"><div id="triageBar" style="background:var(--primary);height:100%;width:0%;transition:width 0.3s"></div></div>
@@ -912,7 +931,17 @@
         const sample = bytes.subarray(0, 4096);
         const binary = sample.some(b => b === 0);
         if (binary) showTextModal(name + ' (binary - hex preview)', path + ' - ' + formatSize(bytes.length), hexPreview(bytes));
-        else showTextModal(name, path + ' - ' + formatSize(bytes.length), new TextDecoder().decode(bytes.subarray(0, 2 * 1024 * 1024)));
+        else {
+            const raw = new TextDecoder().decode(bytes.subarray(0, 2 * 1024 * 1024));
+            let text = raw, title = name;
+            if (/\.xml$/i.test(name) && /<map[\s>]/.test(raw)) {      // SharedPreferences: show key = value first
+                text = '# Parsed SharedPreferences\n' + window.SecurityAuditor.prefsToText(raw) + '\n\n# Raw XML\n' + raw;
+                title = name + ' (SharedPreferences)';
+            }
+            const secrets = window.SecurityAuditor.scanForSecrets(window.SecurityAuditor.prefsToText(raw));
+            if (secrets.length) text = `[!] Possible secrets (masked): ${secrets.map(x => `${x.type} x${x.count}`).join(', ')}\n\n` + text;
+            showTextModal(title, path + ' - ' + formatSize(bytes.length), text);
+        }
     }
     function setupLandingInteractivity() {
         const featureCards = document.querySelectorAll('.feature-card');
@@ -974,6 +1003,7 @@
             case 'files': app.loadFiles(state.currentPath); break;
             case 'shell': setupShell(); break;
             case 'security': setupSecurity(); break;
+            default: if (sectionHooks[section]) sectionHooks[section](); break;
         }
     }
     function setupApps() {
@@ -1299,6 +1329,7 @@
                     }
                 }
                 state.connected = true;
+                activity.add('connect', [adb.device?.productName, adb.device?.serialNumber].filter(Boolean).join(' '));
                 setAmbientActive(true);
                 if (adb.device?.serialNumber) {
                     state.selectedDeviceSerial = adb.device.serialNumber;
@@ -1324,6 +1355,7 @@
             }
         },
         async disconnect() {
+            activity.add('disconnect');
             this.stopLogcat();
             if (adb) {
                 try { await adb.disconnect(); } catch (e) {}
@@ -1430,6 +1462,8 @@
                 return;
             }
             const icon = (d) => `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${d}"/></svg>`;
+            const pinned = new Set(store.get('pinnedApps', []));
+            apps = [...apps].sort((a, b) => (pinned.has(b.package) - pinned.has(a.package)));
             list.innerHTML = apps.map(a => `
                 <div class="app-item">
                     <div class="app-icon">${escapeHtml(a.name.charAt(0).toUpperCase())}</div>
@@ -1438,6 +1472,7 @@
                         <div class="app-package">${escapeHtml(a.package)}</div>
                     </div>
                     <div class="app-actions">
+                        <button class="btn btn-sm btn-ghost" data-act="pin" data-pkg="${escapeAttr(a.package)}" aria-pressed="${pinned.has(a.package)}" title="${pinned.has(a.package) ? 'Unpin' : 'Pin to top'}" aria-label="${pinned.has(a.package) ? 'Unpin' : 'Pin'} ${escapeAttr(a.package)}" style="${pinned.has(a.package) ? 'color:var(--warning)' : ''}">${icon('M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z')}</button>
                         <button class="btn btn-sm btn-ghost" data-act="audit" data-pkg="${escapeAttr(a.package)}" title="Run security scan" aria-label="Scan ${escapeAttr(a.package)}">${icon('M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z')}</button>
                         <button class="btn btn-sm btn-ghost" data-act="info" data-pkg="${escapeAttr(a.package)}" title="App info" aria-label="Info for ${escapeAttr(a.package)}">${icon('M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z')}</button>
                         <button class="btn btn-sm btn-ghost" data-act="dl" data-pkg="${escapeAttr(a.package)}" title="Download APK" aria-label="Download APK of ${escapeAttr(a.package)}">${icon('M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4')}</button>
@@ -1455,6 +1490,12 @@
         async appAction(act, pkg) {
             if (!U.isValidPackageName(pkg)) return;
             switch (act) {
+                case 'pin': {
+                    const pins = new Set(store.get('pinnedApps', []));
+                    if (pins.has(pkg)) pins.delete(pkg); else pins.add(pkg);
+                    store.set('pinnedApps', [...pins]);
+                    return this.filterApps(state.appFilter);
+                }
                 case 'dl': return this.downloadApk(pkg);
                 case 'audit': return this.openAudit(pkg, 'fullScan');
                 case 'info': return this.openAudit(pkg, 'appInfo');
@@ -1518,6 +1559,7 @@
                 const result = await adb.shell(files.length > 1 ? `pm install-multiple -r ${quoted}` : `pm install -r ${quoted}`, 180000);
                 hideLoading();
                 if (result.includes('Success')) {
+                    activity.add('install', files.map(f => f.name).join(', '));
                     showToast('APK installed successfully', 'success');
                     this.loadApps();
                 } else {
@@ -1649,6 +1691,7 @@
                     <div class="file-actions">
                         ${!f.isDir ? `<button class="file-action-btn" data-act="view" title="Preview" aria-label="Preview ${escapeAttr(f.name)}">${ico('M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z')}</button>
                         <button class="file-action-btn" data-act="download" title="Download" aria-label="Download ${escapeAttr(f.name)}">${ico('M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4')}</button>` : ''}
+ <button class="file-action-btn" data-act="more" title="More actions" aria-label="More actions for ${escapeAttr(f.name)}">${ico('M5 12h.01M12 12h.01M19 12h.01')}</button>
                         <button class="file-action-btn" data-act="rename" title="Rename" aria-label="Rename ${escapeAttr(f.name)}">${ico('M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z')}</button>
                         <button class="file-action-btn danger" data-act="delete" title="Delete" aria-label="Delete ${escapeAttr(f.name)}">${ico('M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16')}</button>
                     </div>
@@ -1665,6 +1708,7 @@
             const act = e.target.closest('[data-act]')?.dataset.act;
             if (act === 'view') return this.viewFile(fullPath);
             if (act === 'download') return this.downloadFile(fullPath);
+            if (act === 'more') return this.showFileActions(fullPath, file);
             if (act === 'rename') return this.renameFile(fullPath, file);
             if (act === 'delete') return this.deleteFile(fullPath, file);
             let isDir = file.isDir;
@@ -1723,6 +1767,7 @@
             if (/[\/\x00]/.test(name)) { showToast('Name cannot contain "/"', 'error'); return; }
             try {
                 await this.asShell(`mv ${shQuote(fullPath)} ${shQuote(U.joinPath(state.currentPath, name))}`);
+                activity.add('rename', `${fullPath} -> ${name}`);
                 showToast('Renamed', 'success');
                 this.loadFiles(state.currentPath);
             } catch (e) { showToast('Rename failed: ' + e.message, 'error'); }
@@ -1732,9 +1777,112 @@
             if (!ok) return;
             try {
                 await this.asShell(`rm -${file.isDir ? 'rf' : 'f'} ${shQuote(fullPath)}`);
+                activity.add('delete', fullPath);
                 showToast('Deleted', 'success');
                 this.loadFiles(state.currentPath);
             } catch (e) { showToast('Delete failed: ' + e.message, 'error'); }
+        },
+        /** Run a command as the file browser would (root when Root mode is on); returns raw output. */
+        shellMaybeRoot(cmd, timeout) {
+            return adb.shell(state.rootMode ? U.suWrap(cmd) : cmd, timeout);
+        },
+        showFileActions(fullPath, file) {
+            const isDb = /\.(db|sqlite3?|db3)$/i.test(file.name), isApk = /\.apk$/i.test(file.name);
+            const buttons = [];
+            if (!file.isDir) {
+                buttons.push({ label: 'Checksums', onClick: () => { this.showChecksums(fullPath); } });
+                buttons.push({ label: 'Edit as text', onClick: () => { this.editFile(fullPath, file); } });
+                if (isDb) buttons.push({ label: 'Open in DB viewer', primary: true, onClick: () => { window.__AB.openDatabase(fullPath); } });
+                if (isApk) buttons.push({ label: 'Analyze APK', primary: true, onClick: () => { window.__AB.analyzeDevicePath(fullPath); } });
+            } else buttons.push({ label: 'Download as ZIP', primary: true, onClick: () => { this.downloadFolderZip(fullPath); } });
+            buttons.push({ label: 'File info', onClick: () => { this.showStat(fullPath); } });
+            buttons.push({ label: 'Copy path', onClick: () => { navigator.clipboard?.writeText(fullPath).then(() => showToast('Copied', 'success')); } });
+            openModal({ title: file.name, body: fullPath, buttons });
+        },
+        async showStat(path) {
+            try { showTextModal('File info', path, await this.shellMaybeRoot(`stat ${shQuote(path)} 2>&1`)); } catch (e) { showToast(e.message, 'error'); }
+        },
+        async showChecksums(path) {
+            showLoading('Hashing...', path.split('/').pop());
+            try {
+                const out = [];
+                for (const tool of ['md5sum', 'sha1sum', 'sha256sum']) out.push(await this.shellMaybeRoot(`${tool} ${shQuote(path)} 2>&1`, 120000));
+                hideLoading();
+                activity.add('checksum', path);
+                showTextModal('Checksums', path, out.join('\n'));
+            } catch (e) { hideLoading(); showToast('Hashing failed: ' + e.message, 'error'); }
+        },
+        async downloadFolderZip(dir) {
+            const MAX_FILES = 2000, MAX_TOTAL = 300 * 1024 * 1024, MAX_ONE = 100 * 1024 * 1024;
+            showLoading('Collecting files...', dir);
+            try {
+                const listing = await this.shellMaybeRoot(`find ${shQuote(dir)} -type f 2>/dev/null | head -${MAX_FILES + 1}`, 120000);
+                const paths = listing.split('\n').map(x => x.trim()).filter(x => x.startsWith('/'));
+                if (!paths.length) { hideLoading(); showToast('No readable files in this folder', 'warning'); return; }
+                const truncated = paths.length > MAX_FILES;
+                const files = []; let total = 0, skipped = 0;
+                const prefix = dir.replace(/\/$/, '') + '/';
+                for (let i = 0; i < Math.min(paths.length, MAX_FILES); i++) {
+                    showLoading('Zipping...', `${i + 1}/${Math.min(paths.length, MAX_FILES)} - ${paths[i].split('/').pop()}`);
+                    try {
+                        const bytes = await readDeviceFile(paths[i]);
+                        if (bytes.length > MAX_ONE || total + bytes.length > MAX_TOTAL) { skipped++; continue; }
+                        total += bytes.length;
+                        files.push({ name: paths[i].startsWith(prefix) ? paths[i].slice(prefix.length) : paths[i].replace(/^\//, ''), data: bytes });
+                    } catch (e) { skipped++; }
+                }
+                if (!files.length) { hideLoading(); showToast('Nothing could be read from this folder', 'error'); return; }
+                U.downloadBlob(new Blob([U.buildZip(files)], { type: 'application/zip' }), `${U.safeFileName(dir.split('/').pop() || 'root')}.zip`);
+                activity.add('download-folder', `${dir} (${files.length} files)`);
+                hideLoading();
+                showToast(`ZIP saved: ${files.length} files${skipped ? `, ${skipped} skipped` : ''}${truncated ? ` (first ${MAX_FILES} only)` : ''}`, skipped || truncated ? 'warning' : 'success');
+            } catch (e) { hideLoading(); showToast('ZIP failed: ' + e.message, 'error'); }
+        },
+        async editFile(path, file) {
+            const size = state.rootMode ? 0 : (await adb.statFile(path).catch(() => ({ size: 0 }))).size;
+            if (size > 1024 * 1024) { showToast('Files over 1 MB cannot be edited here', 'warning'); return; }
+            showLoading('Loading...', file.name);
+            let bytes;
+            try { bytes = await readDeviceFile(path); } catch (e) { hideLoading(); showToast('Cannot read file: ' + e.message, 'error'); return; }
+            hideLoading();
+            if (bytes.subarray(0, 4096).some(b => b === 0)) { showToast('This looks like a binary file - not opening the text editor', 'warning'); return; }
+            const ta = document.createElement('textarea');
+            ta.className = 'text-input'; ta.style.cssText = 'width:100%;min-height:50vh;font-family:monospace;font-size:12px'; ta.spellcheck = false;
+            ta.value = new TextDecoder().decode(bytes);
+            openModal({ title: 'Edit ' + file.name, body: ta, wide: true, buttons: [
+                { label: 'Cancel' },
+                { label: 'Save to device', primary: true, onClick: () => {
+                    askConfirm(`Overwrite ${path} on the device?`, { title: 'Save file', confirmText: 'Overwrite', danger: true }).then(async (ok) => {
+                        if (!ok) return;
+                        try {
+                            const data = new TextEncoder().encode(ta.value);
+                            if (state.rootMode) await pushAsRoot(path, data); else await adb.pushFile(path, data, 0o644);
+                            activity.add('edit-file', path);
+                            showToast('Saved', 'success');
+                        } catch (e) { showToast('Save failed: ' + e.message, 'error'); }
+                    });
+                } }] });
+        },
+        async searchFiles() {
+            const pat = await askInput(`Find files whose name contains... (searches inside ${state.currentPath})`, { title: 'Search subfolders', confirmText: 'Search' });
+            if (!pat) return;
+            showLoading('Searching...', pat);
+            try {
+                const out = await this.shellMaybeRoot(`find ${shQuote(state.currentPath)} -iname ${shQuote('*' + pat + '*')} 2>/dev/null | head -301`, 120000);
+                hideLoading();
+                const hits = out.split('\n').map(x => x.trim()).filter(x => x.startsWith('/'));
+                const list = document.createElement('div');
+                list.style.cssText = 'display:grid;gap:4px';
+                if (!hits.length) list.textContent = 'No matches';
+                for (const h of hits.slice(0, 300)) {
+                    const b = document.createElement('button');
+                    b.className = 'btn btn-ghost btn-sm'; b.style.cssText = 'justify-content:flex-start;text-align:left;font-family:monospace;font-size:12px;word-break:break-all;white-space:normal';
+                    b.textContent = h;
+                    b.addEventListener('click', () => { m.close(); this.loadFiles(h.slice(0, h.lastIndexOf('/')) || '/'); });
+                    list.appendChild(b);
+                }
+                const m = openModal({ title: `${Math.min(hits.length, 300)}${hits.length > 300 ? '+' : ''} match(es) for "${pat}"`, body: list, wide: true, buttons: [{ label: 'Close', primary: true }] });
+            } catch (e) { hideLoading(); showToast('Search failed: ' + e.message, 'error'); }
         },
         async viewFile(path) {
             const name = path.split('/').pop();
@@ -1816,6 +1964,7 @@
                 }
                 const bytes = await readDeviceFile(path, (n, total) => showLoading('Downloading...', total ? `${fileName} - ${formatSize(n)} / ${formatSize(total)}` : `${fileName} - ${formatSize(n)}`));
                 U.downloadBlob(new Blob([bytes]), fileName);
+                activity.add('download', path);
                 hideLoading();
                 showToast(`Downloaded: ${fileName} (${formatSize(bytes.length)})`, 'success');
             } catch (e) {
@@ -1842,6 +1991,7 @@
                 if (state.rootMode) await pushAsRoot(destPath, bytes, progress);
                 else await adb.pushFile(destPath, bytes, 0o644, progress);
                 hideLoading();
+                activity.add('upload', destPath);
                 showToast(`Uploaded: ${file.name}`, 'success');
                 if (!skipReload) this.loadFiles(state.currentPath);
             } catch (e) {
@@ -1973,7 +2123,8 @@
             const wrapRoot = (shellCmd) => (useRoot ? U.suWrap(shellCmd) : shellCmd);
             const cwdPrefix = state.shellCwd ? `cd ${shQuote(state.shellCwd)} && ` : '';
             try {
-                const cdMatch = cmd.match(/^\s*cd(?:\s+(.*))?$/);
+                activity.add('shell', cmd);
+            const cdMatch = cmd.match(/^\s*cd(?:\s+(.*))?$/);
                 if (cdMatch) {
                     const target = (cdMatch[1] || '').trim().replace(/^(["'])(.*)\1$/, '$2');
                     let resolveCmd;
@@ -2442,6 +2593,7 @@
                 });
                 progress.classList.add('hidden');
                 this.recordScan(report);
+                activity.add('scan', `${pkg} risk=${report.riskScore} fail=${report.summary.fail}`);
                 this.showReport(report, results);
             } catch (e) {
                 progress.classList.add('hidden');
@@ -2473,6 +2625,7 @@
             try {
                 const pkgs = await adb.listPackages(!!includeSystem);
                 const auditor = new SecurityAuditor(adb);
+                const sel = document.getElementById('triagePerm'); if (sel) sel.innerHTML = '<option value="">All permissions</option>';
                 this.triageRows = await auditor.triageApps(pkgs, (pkg, i, t) => {
                     if (status) status.textContent = `${i}/${t} - ${pkg}`;
                     if (bar) bar.style.width = Math.round(i / t * 100) + '%';
@@ -2486,7 +2639,13 @@
             const results = document.getElementById('triageResults');
             if (!results) return;
             const { key, dir } = this.triageSort;
-            const rows = [...this.triageRows].sort((a, b) => {
+            const permSel = document.getElementById('triagePerm');
+            if (permSel && permSel.options.length <= 1) {
+                const all = [...new Set(this.triageRows.flatMap(r => r.permissions || []))].sort();
+                permSel.innerHTML = '<option value="">All permissions</option>' + all.map(p => `<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`).join('');
+            }
+            const wantPerm = permSel ? permSel.value : '';
+            const rows = this.triageRows.filter(r => !wantPerm || (r.permissions || []).includes(wantPerm)).sort((a, b) => {
                 const av = a[key], bv = b[key];
                 if (typeof av === 'string' || typeof bv === 'string') return String(av ?? '').localeCompare(String(bv ?? '')) * dir;
                 return ((av === true ? 1 : av === false ? 0 : av ?? -1) - (bv === true ? 1 : bv === false ? 0 : bv ?? -1)) * dir;
@@ -2513,8 +2672,8 @@
             };
         },
         exportTriageCsv() {
-            const header = ['package', 'risk', 'debuggable', 'allowBackup', 'cleartext', 'targetSdk', 'minSdk', 'dangerousPerms', 'installer'];
-            const rows = [header, ...this.triageRows.filter(r => !r.error).map(r => header.map(h => r[h]))];
+            const header = ['package', 'risk', 'debuggable', 'allowBackup', 'cleartext', 'targetSdk', 'minSdk', 'dangerousPerms', 'installer', 'permissions'];
+            const rows = [header, ...this.triageRows.filter(r => !r.error).map(r => header.map(h => (h === 'permissions' ? (r.permissions || []).join(';') : r[h])))];
             const cell = (v) => { const s = String(v ?? ''); return '"' + (/^[=+\-@]/.test(s) ? "'" + s : s).replace(/"/g, '""') + '"'; };
             U.downloadBlob(new Blob([rows.map(r => r.map(cell).join(',')).join('\r\n')], { type: 'text/csv' }), `app_triage_${U.timestampForFile()}.csv`);
         },
@@ -2552,7 +2711,7 @@
             app.closeAddMenu();
         }
     });
-    const sectionOrder = ['overview', 'apps', 'files', 'screenshot', 'shell', 'security'];
+    const sectionOrder = ['overview', 'apps', 'files', 'screenshot', 'shell', 'security', 'tools'];
     document.querySelectorAll('.dock-item').forEach(item => {
         item.setAttribute('role', 'button');
         item.setAttribute('tabindex', '0');
@@ -2622,6 +2781,7 @@
             { name: 'Keyboard shortcuts', hint: '?', run: () => showShortcuts() },
             { name: 'About ADB Auditor', run: () => showAbout() }
         ];
+        list.push(...extraCommands);
         return list.filter(c => (!c.needsDevice || state.connected) && (!c.when || c.when()));
     };
     function refreshCurrent() {
@@ -2630,7 +2790,7 @@
         else if (s === 'screenshot') app.captureScreenshot(); else if (s === 'security') loadSecurityApps();
     }
     function showShortcuts() {
-        const rows = [['Alt + 1 … 6', 'Switch section'], ['Alt + R', 'Refresh current view'], ['Alt + D', 'Disconnect'], ['Ctrl/Cmd + K', 'Command palette'], ['?', 'This help'],
+        const rows = [['Alt + 1 … 7', 'Switch section'], ['Alt + R', 'Refresh current view'], ['Alt + D', 'Disconnect'], ['Ctrl/Cmd + K', 'Command palette'], ['?', 'This help'],
             ['Tab', 'Shell: autocomplete'], ['↑ / ↓', 'Shell: history'], ['Ctrl + C', 'Shell: stop streaming command'], ['Ctrl + L', 'Shell: clear'], ['Esc', 'Close dialogs']];
         const wrap = document.createElement('div');
         wrap.innerHTML = '<table class="ab-table"><tbody>' + rows.map(([k, v]) => `<tr><td class="mono">${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`).join('') + '</tbody></table>';
@@ -2677,7 +2837,7 @@
         if (document.querySelector('.ab-modal-overlay')) return;
         if (e.altKey && !e.ctrlKey && !e.metaKey) {
             const n = parseInt(e.key, 10);
-            if (n >= 1 && n <= 6) { e.preventDefault(); if (n === 1 || state.connected) navigate(sectionOrder[n - 1]); return; }
+            if (n >= 1 && n <= 7) { e.preventDefault(); if (n === 1 || state.connected) navigate(sectionOrder[n - 1]); return; }
             if (e.key.toLowerCase() === 'r' && state.connected) { e.preventDefault(); refreshCurrent(); return; }
             if (e.key.toLowerCase() === 'd' && state.connected) { e.preventDefault(); app.disconnect(); return; }
         }
@@ -2689,7 +2849,13 @@
     });
     navigate('overview');
     window.app = app;
-    window.__AB = { state, app, store, openModal, askConfirm, askInput, showToast };
+    window.__AB = {
+        state, app, store, openModal, askConfirm, askInput, showToast, showLoading, hideLoading, navigate, activity,
+        getAdb: () => adb, formatSize, readDeviceFile, pullAsRoot, previewBytes, showTextModal, loadSecurityApps, templates, securityTabs,
+        registerSection(id, template, onShow) { templates[id] = template; sectionHooks[id] = onShow; },
+        registerCommand(cmd) { extraCommands.push(cmd); }
+    };
+    window.dispatchEvent(new Event('ab-ready'));
 
     window.viewStorageFile = async function(encodedPath) {
         const path = safeDecode(encodedPath);

@@ -15,14 +15,28 @@
         ]
     };
     const lsLine = ([perm, name, size]) => `${perm} 2 u0_a123 sdcard_rw ${size || 4096} 2024-03-04 11:30 ${name}`;
+    const b64 = (t) => Uint8Array.from(atob(t), c => c.charCodeAt(0));
     const dev = new MockAdbDevice({
         maxdata: 4096,
         outChunk: 777,
+        files: { '/data/app/base.apk': b64(window.__APK_B64), '/sdcard/test.db': b64(window.__DB_B64) },
         shell: async (cmd) => {
             window.__shellLog.push(cmd);
             if (cmd.includes('getprop') && cmd.includes('echo "model=')) return [...cmd.matchAll(/echo "(\w+)=/g)].map(m => `${m[1]}=${props[m[1]] ?? ''}`).join('\n');
             if (cmd.startsWith('dumpsys battery')) return 'level: 88\ntemperature: 283\nstatus: 2';
             if (cmd.startsWith('df /data')) return '/dev/block/dm-9 100 50 50 50% /data\n@@\nMemTotal: 8000000 kB\nMemAvailable: 4000000 kB\n@@\n86400.55';
+            if (cmd.includes('--show-versioncode')) return 'package:com.example.app  installer=com.android.vending versionCode:42\npackage:com.bad.debuggable  installer=null versionCode:7';
+            if (cmd.startsWith('settings list')) return 'adb_enabled=1\nhttp_proxy=:0\nwifi_on=1';
+            if (cmd === 'getprop') return '[ro.build.type]: [user]\n[ro.product.model]: [E2E]';
+            if (cmd === 'dumpsys -l') return 'Currently running services:\n  battery\n  wifi';
+            if (cmd.startsWith("dumpsys 'battery'")) return 'Battery Service state:\n  level: 88';
+            if (cmd.includes('echo @@ADDR')) return '@@ADDR\n2: wlan0    inet 192.168.1.20/24 scope global wlan0\n@@ROUTE\ndefault via 192.168.1.1 dev wlan0\n@@DNS\n8.8.8.8\n@@PROXY\nnull\n@@PRIVDNS\noff\nnull';
+            if (cmd.startsWith('settings get global http_proxy')) return ':0';
+            if (cmd.startsWith('am start') || cmd.startsWith('am broadcast')) return 'Starting: Intent { act=android.intent.action.VIEW }';
+            if (cmd.startsWith('logcat -b')) return '01-02 10:00:00.000  1  1 I Tag: snapshot line\n';
+            if (cmd.startsWith('stat ')) return 'File: x\nSize: 10';
+            if (cmd.startsWith('md5sum') || cmd.startsWith('sha1sum') || cmd.startsWith('sha256sum')) return 'deadbeef  file';
+            if (cmd.startsWith('find ')) return cmd.includes('-iname') ? '/storage/emulated/0/DCIM/photo.jpg\n/storage/emulated/0/notes.txt' : '/storage/emulated/0/DCIM/a.txt\n/storage/emulated/0/DCIM/b.txt';
             if (cmd.startsWith('pm list packages')) return 'package:com.example.app\npackage:com.bad.debuggable\npackage:com.evil.<b>x';
             if (cmd.startsWith('pm path')) return 'package:/data/app/base.apk';
             if (cmd.startsWith('dumpsys package com.bad.debuggable')) return FIX.dump.replace(/com\.example\.app/g, 'com.bad.debuggable').replace('flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP ]', 'flags=[ DEBUGGABLE HAS_CODE ]');

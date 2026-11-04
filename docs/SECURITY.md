@@ -86,7 +86,10 @@ ADB Auditor is designed with privacy and security as core principles. This docum
 - A Content-Security-Policy restricts scripts to this origin (`script-src 'self'`).
 - Scan reports contain masked samples of secrets, never raw values; CSV exports defuse formula injection.
 - The only external request is the Google Fonts stylesheet; the CSP allows nothing else.
-- Local storage holds only UI preferences, shell history (last 50 commands) and scan summaries; clear site data to remove them. The ADB RSA key is kept in IndexedDB.
+- The activity log records connects, scans, file operations and shell commands (including their arguments) in this browser only, as an evidence trail; clear it from Settings.
+- The APK analyzer and SQLite viewer run locally; pulled files are held in memory and never uploaded. Secrets found are masked in every report.
+- Device-control tools (reboot, settings, proxy, input) validate and quote every argument and ask for confirmation before changing device state.
+- Local storage holds only UI preferences, shell history (last 50 commands), the activity log, pinned apps, package baselines and scan summaries; clear site data to remove them. The ADB RSA key is kept in IndexedDB.
 
 ## Legal Disclaimer
 

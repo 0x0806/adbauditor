@@ -468,6 +468,9 @@
                 for (const app of rootApps) {
                     if (pkgList.includes('package:' + app)) results.findings.push({ type: 'root_app', package: app, note: `Root management app detected (${app})` });
                 }
+                for (const x of ['de.robv.android.xposed.installer', 'org.lsposed.manager', 'org.meowcat.edxposed.manager', 'io.github.lsposed.manager']) {
+                    if (pkgList.includes('package:' + x)) results.findings.push({ type: 'xposed', package: x, note: `Xposed-family framework manager detected (${x})` });
+                }
                 const tags = await this.sh('getprop ro.build.tags');
                 if (tags.includes('test-keys')) results.findings.push({ type: 'test_keys', note: 'Device built with test-keys - indicates custom ROM' });
 
@@ -766,9 +769,48 @@
             return results;
         }
 
+        /** Encryption, lock screen, developer/debug exposure, Play Protect, device admins, user-installed CAs (root). */
+        async testDeviceExposure() {
+            const results = newResult('DEVICE-EXPOSURE', 'MASVS-STORAGE', 'Device Exposure & Hardening',
+                'Checks storage encryption, screen lock, developer options, install verification, device admins and user-installed CA certificates');
+            try {
+                const script = ['echo "crypto=$(getprop ro.crypto.state)"', 'echo "cryptotype=$(getprop ro.crypto.type)"', 'echo "lockdisabled=$(locksettings get-disabled 2>/dev/null)"',
+                    'echo "devsettings=$(settings get global development_settings_enabled)"', 'echo "adb=$(settings get global adb_enabled)"',
+                    'echo "nonmarket=$(settings get secure install_non_market_apps)"', 'echo "verifier=$(settings get global package_verifier_enable)"',
+                    'echo "verifyadb=$(settings get global verifier_verify_adb_installs)"'].join('; ');
+                const p = {};
+                (await this.sh(script)).split('\n').forEach(l => { const i = l.indexOf('='); if (i > 0) p[l.slice(0, i)] = l.slice(i + 1).trim(); });
+                const note = (severity, type, text, recommendation) => {
+                    results.findings.push({ type, severity, note: text, recommendation });
+                    escalate(results, severity);
+                    if (severity !== 'info' && severity !== 'low') results.status = 'fail';
+                    else if (results.status === 'pass') results.status = 'review';
+                };
+                if (p.crypto === 'unencrypted') note('high', 'not_encrypted', 'Device storage is not encrypted', 'Enable device encryption');
+                else if (p.crypto === 'encrypted') results.findings.push({ type: 'encrypted', note: `Storage encrypted (${p.cryptotype || 'unknown'}-based)` });
+                if (p.lockdisabled === 'true') note('high', 'no_screen_lock', 'No screen lock is configured', 'Set a PIN, pattern or password');
+                if (p.devsettings === '1') note('low', 'developer_options', 'Developer options are enabled', 'Disable developer options when not testing');
+                if (p.adb === '1') note('low', 'usb_debugging', 'USB debugging is enabled', 'Disable USB debugging when not in use');
+                if (p.nonmarket === '1') note('medium', 'unknown_sources', 'Installing apps from unknown sources is allowed', 'Disable unknown sources');
+                if (p.verifier === '0') note('medium', 'play_protect_off', 'Package verification (Play Protect) is disabled', 'Enable app verification');
+                if (p.verifyadb === '0') note('low', 'adb_installs_unverified', 'Apps installed over ADB are not verified', 'Enable "Verify apps over USB"');
+                const admins = (await this.sh('dumpsys device_policy 2>/dev/null | grep -E "ComponentInfo\\{"')).match(/ComponentInfo\{[^}]+\}/g) || [];
+                const adminList = [...new Set(admins.map(a => a.slice(14, -1)))];
+                if (adminList.length) note('low', 'device_admins', `Device administrators: ${adminList.join(', ')}`, 'Review device admin apps');
+                if (await this.hasRoot()) {
+                    const cas = (await this.sh(suWrap('ls /data/misc/user/0/cacerts-added') + ' 2>/dev/null')).split('\n').filter(x => x.trim());
+                    if (cas.length) note('medium', 'user_ca_certs', `${cas.length} user-installed CA certificate(s) - traffic interception is possible`, 'Remove CA certificates you do not recognise');
+                }
+            } catch (e) {
+                results.status = 'error'; results.error = e.message;
+            }
+            return results;
+        }
+
         async runDeviceAudit(onProgress = null) {
             const tests = [
                 { name: 'Device Posture', fn: () => this.testDeviceSecurity() },
+                { name: 'Device Exposure', fn: () => this.testDeviceExposure() },
                 { name: 'Root Detection', fn: () => this.testRootDetection() },
                 { name: 'Emulator Detection', fn: () => this.testEmulatorDetection() }
             ];
@@ -965,6 +1007,7 @@
             ];
             if (options.includeDevice !== false) {
                 tests.push({ name: 'Device Posture', fn: () => this.testDeviceSecurity() });
+                tests.push({ name: 'Device Exposure', fn: () => this.testDeviceExposure() });
                 tests.push({ name: 'Root Detection', fn: () => this.testRootDetection() });
                 tests.push({ name: 'Emulator Detection', fn: () => this.testEmulatorDetection() });
             }
@@ -998,7 +1041,8 @@
                             targetSdk: parseInt((dump.match(/targetSdk=(\d+)/) || [])[1], 10) || null,
                             minSdk: parseInt((dump.match(/minSdk=(\d+)/) || [])[1], 10) || null,
                             installer: (dump.match(/installerPackageName=(\S+)/) || [])[1] || 'null',
-                            dangerousPerms: perms.length
+                            dangerousPerms: perms.length,
+                            permissions: perms.map(x => x.replace('android.permission.', ''))
                         };
                         let score = 0;
                         if (row.debuggable) score += 40;
@@ -1022,6 +1066,7 @@
     }
 
     SecurityAuditor.scanForSecrets = scanForSecrets;
+    SecurityAuditor.prefsToText = prefsToText;
     SecurityAuditor.DANGEROUS_PERMS = DANGEROUS_PERMS;
     global.SecurityAuditor = SecurityAuditor;
     void MODULE_KEY;

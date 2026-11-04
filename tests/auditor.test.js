@@ -209,10 +209,10 @@ test('runFullAudit aggregates results, caches dumpsys and computes a risk score'
     const progress = [];
     const report = plain(await auditor.runFullAudit(PKG, (n, i, t) => progress.push([n, i, t])));
     assert.equal(report.packageName, PKG);
-    assert.equal(report.tests.length, 17);
+    assert.equal(report.tests.length, 18);
     assert.equal(progress.at(-1)[1], progress.at(-1)[2]);
     const total = Object.values(report.summary).reduce((a, b) => a + b, 0);
-    assert.equal(total, 17);
+    assert.equal(total, 18);
     assert.ok(report.riskScore > 0);
     assert.ok(report.tests.find(t => t.id === 'MASTG-TEST-0039').status === 'fail');
     const dumps = adb.calls.filter(c => c.startsWith('dumpsys package')).length;
@@ -258,4 +258,46 @@ test('getActiveConnections decodes /proc/net/tcp and filters by uid', async () =
     const conns = plain(await auditor.getActiveConnections(PKG));
     assert.equal(conns.length, 1);
     assert.deepEqual(conns[0], { local: '127.0.0.1:8080', remote: '0.0.0.0:0', state: 'LISTEN', uid: '10234' });
+});
+
+test('device exposure: unencrypted, no lock, dev options, unknown sources, Play Protect off, admins, user CAs', async () => {
+    const { auditor } = auditorWith([
+        [/ro\.crypto\.state/, 'crypto=unencrypted\ncryptotype=\nlockdisabled=true\ndevsettings=1\nadb=1\nnonmarket=1\nverifier=0\nverifyadb=0'],
+        [/device_policy/, '  Admin ComponentInfo{com.evil.admin/com.evil.admin.Receiver}:\n  Admin ComponentInfo{com.evil.admin/com.evil.admin.Receiver}:'],
+        [/su -c 'id'|su -c id/, 'uid=0(root)'],
+        [/cacerts-added/, '9a5ba575.0\nabcd1234.0']
+    ]);
+    const r = plain(await auditor.testDeviceExposure());
+    const types = r.findings.map(f => f.type);
+    for (const t of ['not_encrypted', 'no_screen_lock', 'developer_options', 'usb_debugging', 'unknown_sources', 'play_protect_off', 'adb_installs_unverified', 'device_admins', 'user_ca_certs']) {
+        assert.ok(types.includes(t), 'missing ' + t);
+    }
+    assert.equal(r.findings.find(f => f.type === 'device_admins').note.split('com.evil.admin/').length, 2, 'admins de-duplicated');
+    assert.equal(r.status, 'fail');
+});
+
+test('device exposure: hardened device passes', async () => {
+    const { auditor } = auditorWith([[/ro\.crypto\.state/, 'crypto=encrypted\ncryptotype=file\nlockdisabled=false\ndevsettings=0\nadb=0\nnonmarket=0\nverifier=1\nverifyadb=1']]);
+    const r = plain(await auditor.testDeviceExposure());
+    assert.equal(r.status, 'pass');
+    assert.ok(r.findings.some(f => f.type === 'encrypted'));
+});
+
+test('root detection notices Xposed-family managers', async () => {
+    const { auditor } = auditorWith([[/pm list packages/, 'package:org.lsposed.manager\npackage:com.x']]);
+    const r = plain(await auditor.testRootDetection());
+    assert.ok(r.findings.some(f => f.type === 'xposed'));
+});
+
+test('prefsToText turns SharedPreferences XML into key=value lines', () => {
+    const { ctx } = auditorWith([]);
+    const xml = '<?xml version="1.0"?><map><string name="auth_token">abc123</string><boolean name="on" value="true" /><int name="n" value="5" /><string name="empty"></string></map>';
+    assert.equal(ctx.SecurityAuditor.prefsToText(xml), 'auth_token=abc123\non=true\nn=5\nempty=');
+    assert.equal(ctx.SecurityAuditor.prefsToText('not xml'), 'not xml');
+});
+
+test('triage rows carry the granted permission names (for the permission filter)', async () => {
+    const { auditor } = auditorWith([[/dumpsys package com\.cam/, dump({ pkg: 'com.cam' })]]);
+    const rows = plain(await auditor.triageApps(['com.cam']));
+    assert.deepEqual(rows[0].permissions.sort(), ['ACCESS_FINE_LOCATION', 'CAMERA']);
 });
