@@ -5,12 +5,20 @@
   "private": true,
   "scripts": {
     "test": "node --test --test-force-exit --test-timeout=20000 \"tests/*.test.js\"",
-    "lint": "node scripts/check-syntax.js",
+    "lint": "node scripts/check-syntax.js && eslint .",
     "test:e2e": "node tests/e2e/run.js",
     "serve": "python3 -m http.server 8080"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "CC-BY-NC-ND-4.0",
   "author": "Sandeep Wawdane (original creator)",
-  "contributors": ["0x0806 (enhancements)"]
+  "contributors": [
+    "0x0806 (enhancements)"
+  ],
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0"
+  }
 }

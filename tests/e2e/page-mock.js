@@ -19,7 +19,9 @@
     const dev = new MockAdbDevice({
         maxdata: 4096,
         outChunk: 777,
-        files: { '/data/app/base.apk': b64(window.__APK_B64), '/data/app/evil.apk': b64(window.__APK_EVIL_B64), '/sdcard/test.db': b64(window.__DB_B64), '/sdcard/evil.db': b64(window.__DB_EVIL_B64) },
+        files: { '/data/app/base.apk': b64(window.__APK_B64), '/data/app/evil.apk': b64(window.__APK_EVIL_B64), '/sdcard/test.db': b64(window.__DB_B64), '/sdcard/evil.db': b64(window.__DB_EVIL_B64),
+            '/data/app/split_a.apk': b64(window.__APK_B64), '/data/app/split_b.apk': Uint8Array.from([80, 75, 3, 4, 1, 2, 3]),
+            '/storage/emulated/0/dl.bin': Uint8Array.from([1, 2, 3, 4, 5]), '/storage/emulated/0/note.txt': new TextEncoder().encode('hello\npassword=hunter2hunter2\n') },
         shell: async (cmd) => {
             window.__shellLog.push(cmd);
             if (cmd.includes('getprop') && cmd.includes('echo "model=')) return [...cmd.matchAll(/echo "(\w+)=/g)].map(m => `${m[1]}=${props[m[1]] ?? ''}`).join('\n');
@@ -40,6 +42,9 @@
             if (cmd.startsWith('md5sum') || cmd.startsWith('sha1sum') || cmd.startsWith('sha256sum')) return 'deadbeef  file';
             if (cmd.startsWith('find ')) return cmd.includes('-iname') ? '/storage/emulated/0/DCIM/photo.jpg\n/storage/emulated/0/notes.txt' : '/storage/emulated/0/DCIM/a.txt\n/storage/emulated/0/DCIM/b.txt';
             if (cmd.startsWith('pm list packages')) return 'package:com.example.app\npackage:com.bad.debuggable\npackage:com.evil.<b>x';
+            if (cmd.startsWith('pm install')) return 'Success';
+            if (cmd.startsWith('pm path') && cmd.includes('com.split.app')) return 'package:/data/app/split_a.apk\npackage:/data/app/split_b.apk';
+            if (cmd.includes('ping -c')) return new Promise(() => {});
             if (cmd.startsWith('pm path')) return cmd.includes('com.bad.debuggable') ? 'package:/data/app/evil.apk' : 'package:/data/app/base.apk';
             if (cmd.startsWith('dumpsys package com.bad.debuggable')) return FIX.dump.replace(/com\.example\.app/g, 'com.bad.debuggable').replace('flags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP ]', 'flags=[ DEBUGGABLE HAS_CODE ]');
             if (cmd.startsWith('dumpsys package')) return FIX.dump;

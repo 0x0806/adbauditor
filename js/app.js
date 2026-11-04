@@ -55,7 +55,6 @@
     const safeDecode = (str) => {
         try { return decodeURIComponent(escape(atob(str))); } catch (e) { return atob(str); }
     };
-    const base64ToBytes = U.base64ToBytes;
     let adb = null;
     let deviceManager = null;
 
@@ -1761,7 +1760,7 @@
         async makeDirectory() {
             const name = await askInput('Folder name', { title: 'New folder', confirmText: 'Create' });
             if (!name) return;
-            if (/[\/\x00]/.test(name)) { showToast('Folder name cannot contain "/"', 'error'); return; }
+            if (/[/\x00]/.test(name)) { showToast('Folder name cannot contain "/"', 'error'); return; }
             try {
                 await this.asShell(`mkdir -p ${shQuote(U.joinPath(state.currentPath, name))}`);
                 showToast('Folder created', 'success');
@@ -1771,7 +1770,7 @@
         async renameFile(fullPath, file) {
             const name = await askInput('New name', { title: 'Rename', value: file.name, confirmText: 'Rename' });
             if (!name || name === file.name) return;
-            if (/[\/\x00]/.test(name)) { showToast('Name cannot contain "/"', 'error'); return; }
+            if (/[/\x00]/.test(name)) { showToast('Name cannot contain "/"', 'error'); return; }
             try {
                 await this.asShell(`mv ${shQuote(fullPath)} ${shQuote(U.joinPath(state.currentPath, name))}`);
                 activity.add('rename', `${fullPath} -> ${name}`);

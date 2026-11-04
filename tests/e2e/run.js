@@ -301,6 +301,84 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'}  
     await waitFor(`document.getElementById('shellInput').value==='ls Documents/'`, 'tab completion');
     check('Tab completes a path using the device listing', true);
 
+
+    // ---- apps: install, download (single + split), app actions
+    await evalJs(`document.querySelector('[data-section=apps]').click()`);
+    await waitFor(`document.querySelectorAll('#appList .app-item').length>=1`, 'apps for install');
+    await evalJs(`app.installApks([new File([new Uint8Array([80,75,3,4,0,0,0,0])], 'good.apk')])`);
+    check('APK install pushes to a temp file, runs pm install and cleans up', await evalJs(`window.__shellLog.some(c=>/^pm install -r '\\/data\\/local\\/tmp\\/\\.adbaud_[^']+\\.apk'$/.test(c)) && window.__shellLog.some(c=>/^rm -f '\\/data\\/local\\/tmp\\/\\.adbaud_/.test(c)) && Object.keys(__dev.pushed).some(k=>k.startsWith('/data/local/tmp/.adbaud_'))`));
+    await evalJs(`app.installApks([new File([new Uint8Array([1,2,3,4])], 'bad.apk')])`);
+    check('a non-APK file is rejected before anything is pushed', await evalJs(`/not a valid APK/.test(document.getElementById('toastContainer').innerText)`));
+    await evalJs(`app.downloadApk('com.example.app')`);
+    check('single APK download reports success', await evalJs(`/APK downloaded/.test(document.getElementById('toastContainer').innerText)`));
+    await evalJs(`app.downloadApk('com.split.app')`);
+    check('split APKs are bundled into a ZIP', await evalJs(`/split APKs downloaded as ZIP/.test(document.getElementById('toastContainer').innerText)`));
+    await evalJs(`app.showAppActions('com.example.app')`);
+    check('app actions dialog lists launch/stop/clear/uninstall', await evalJs(`['Launch','Force stop','Clear data','Uninstall'].every(l=>[...document.querySelectorAll('.ab-modal-foot button')].some(b=>b.textContent===l))`));
+    await evalJs(`[...document.querySelectorAll('.ab-modal-foot button')].find(b=>b.textContent==='Force stop').click()`);
+    await waitFor(`window.__shellLog.includes('am force-stop com.example.app')`, 'force stop sent');
+    check('force-stop sends the command for a validated package', true);
+
+    // ---- files: upload, download, preview with secret banner, root toggle without root
+    await evalJs(`document.querySelector('[data-section=files]').click()`);
+    await waitFor(`!!document.getElementById('fileFilter')`, 'files for transfers');
+    await evalJs(`app.loadFiles('/storage/emulated/0')`);
+    await evalJs(`app.uploadFile(new File([new Uint8Array([9,8,7])], 'up.bin'))`);
+    check('upload pushes bytes to the current folder', await evalJs(`Array.from(__dev.pushed['/storage/emulated/0/up.bin']||[]).join()==='9,8,7'`));
+    await evalJs(`app.downloadFile('/storage/emulated/0/dl.bin')`);
+    check('file download completes', await evalJs(`/Downloaded: dl.bin/.test(document.getElementById('toastContainer').innerText)`));
+    await evalJs(`app.viewFile('/storage/emulated/0/note.txt')`);
+    await waitFor(`!!document.querySelector('.ab-modal pre')`, 'preview opened');
+    check('preview warns about secrets without printing them in the banner', await evalJs(`/Possible secrets \\(masked\\): password/.test(document.querySelector('.ab-modal pre').textContent)`));
+    await evalJs(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await evalJs(`document.getElementById('rootToggle').checked=true; app.toggleRootMode()`);
+    check('enabling Root mode on a non-rooted device is refused and reverted', await evalJs(`app.constructor===Object && document.getElementById('rootToggle').checked===false && /not available/.test(document.getElementById('toastContainer').innerText)`));
+
+    // ---- screenshot live mode
+    await evalJs(`document.querySelector('[data-section=screenshot]').click()`);
+    await evalJs(`app.toggleLiveScreenshot()`);
+    await waitFor(`!!document.querySelector('.screenshot-preview')`, 'live frame');
+    check('live screenshot starts', await evalJs(`app.liveTimer!==null`));
+    await evalJs(`document.querySelector('[data-section=files]').click()`);
+    check('leaving the screen stops live screenshots', await evalJs(`app.liveTimer===null`));
+
+    // ---- security sub-tabs
+    await evalJs(`document.querySelector('[data-section=security]').click()`);
+    await waitFor(`document.querySelectorAll('.tab-btn').length===11`, 'security tabs');
+    const tabRun = async (tab, selId, fn, resId, re, label) => {
+        await evalJs(`app.switchSecurityTab('${tab}')`);
+        await waitFor(`document.querySelectorAll('#${selId} option').length>1`, tab + ' select');
+        await evalJs(`document.getElementById('${selId}').value='com.example.app'; app.${fn}()`);
+        await waitFor(`/${re}/i.test(document.getElementById('${resId}').innerText)`, label);
+    };
+    await tabRun('backup', 'backupSelect', 'checkBackup', 'backupResults', 'Vulnerable', 'backup result');
+    check('backup tab: allowBackup app is flagged', true);
+    await tabRun('debuggable', 'debugSelect', 'checkDebuggable', 'debugResults', 'Not Debuggable', 'debug result');
+    check('debug tab: release build passes', true);
+    await tabRun('exported', 'exportedSelect', 'analyzeExported', 'exportedResults', 'MainActivity', 'exported result');
+    check('components tab lists exported components', true);
+    await tabRun('permissions', 'permSelect', 'analyzePermissions', 'permResults', 'CAMERA', 'permission result');
+    check('permissions tab lists granted dangerous permissions', true);
+    await tabRun('appInfo', 'appInfoSelect', 'loadAppInfo', 'appInfoResults', '1\\.4\\.2', 'app info result');
+    check('app info tab shows version details', true);
+    await tabRun('localStorage', 'storageSelect', 'analyzeStorage', 'storageResults', 'No files found', 'storage result');
+    check('storage tab reports inaccessible storage without errors', true);
+    await evalJs(`app.switchSecurityTab('logcat')`);
+    check('security tab switch away from logcat leaves no running stream', await evalJs(`app.logcatRunning===false`));
+
+    // ---- shell: root toggle and Ctrl+C on a streaming command
+    await evalJs(`document.querySelector('[data-section=shell]').click()`);
+    await waitFor(`!!document.getElementById('shellInput')`, 'shell for streaming');
+    await evalJs(`setTimeout(() => app.executeCommand('ping -c 1 example.com'), 0); true`);
+    await waitFor(`app.shellStream!==null`, 'stream started');
+    await evalJs(`app.shellStream.stop()`);
+    await waitFor(`app.shellStream===null`, 'stream stopped');
+    check('streaming shell command can be stopped (Ctrl+C path)', true);
+    await evalJs(`app.toggleShellRoot()`);
+    await evalJs(`app.executeCommand('id')`);
+    check('root shell wraps the cwd-prefixed command in su -c with correctly nested quotes', await evalJs(`window.__shellLog.includes("su -c 'cd '\\\\''/sdcard/DCIM'\\\\'' && id'")`));
+    await evalJs(`app.toggleShellRoot()`);
+
     // ---- adversarial content on the new screens
     await evalJs(`document.querySelector('[data-section=tools]').click()`);
     await waitFor(`!!document.querySelector('[data-ttab=apk]')`, 'tools reopened');

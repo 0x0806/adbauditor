@@ -9,8 +9,6 @@
 (function(global) {
     'use strict';
 
-    const U = global.ABUtils;
-
     /* ---------- ZIP ---------- */
 
     class ZipReader {

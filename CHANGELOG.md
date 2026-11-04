@@ -19,6 +19,8 @@ Found with mutation fuzzing of every parser, a concurrency stress test, adversar
 
 ### Tests
 - New: mutation-fuzz suite (APK/ZIP, binary XML, DEX, SQLite, inner-file corruption), device-manager tests, deterministic concurrency stress test (no leaked socket queues), 64-bit rowid fixtures, older-Android `ls` formats.
+- ESLint (errors fail the build: undefined variables, duplicate keys, unreachable code...) added to `npm run lint` and CI; it found no undefined identifiers in the shipped code.
+- End-to-end run grew to 85 checks and now also exercises APK install/download (single and split), upload/download, file preview with secret warning, the Root toggle on a non-rooted device, live screenshots, every security sub-tab, streaming shell commands with Ctrl+C and root shell quoting.
 - End-to-end test now also covers hostile content on every new screen (APK package/component names, DB table names and cells, settings values, activity log), file rename/delete/mkdir command quoting, shell `cd`/completion, and recovery after a failed connect.
 
 ## 2.1.0 - more enhancements by 0x0806
