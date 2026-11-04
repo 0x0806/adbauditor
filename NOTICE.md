@@ -12,8 +12,3 @@ test suite, accessibility, offline mode, documentation) were developed by
 
 See [CHANGELOG.md](CHANGELOG.md) for exactly what was changed.
 
-## License
-
-The original work is licensed under CC BY-NC-ND 4.0 (c) 2026 Sandeep - see [LICENSE](LICENSE).
-The license text and the original copyright notice are retained unchanged. The "NoDerivatives"
-term means modified versions should only be distributed with the original author's permission.
