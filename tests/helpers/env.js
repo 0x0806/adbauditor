@@ -20,7 +20,7 @@ function makeStorage() {
 function createContext(extra = {}) {
     const sandbox = {
         console, setTimeout, clearTimeout, setInterval, clearInterval, queueMicrotask,
-        TextEncoder, TextDecoder, URL, Blob, Date, Promise, Map, Set, BigInt,
+        TextEncoder, TextDecoder, URL, Blob, Response, DecompressionStream, Date, Promise, Map, Set, BigInt, DataView, Uint8Array,
         atob: s => Buffer.from(s, 'base64').toString('binary'),
         btoa: s => Buffer.from(s, 'binary').toString('base64'),
         crypto: webcrypto,
@@ -43,7 +43,7 @@ function load(ctx, files) {
 
 function loadLibs(extra = {}) {
     const ctx = createContext(extra);
-    return load(ctx, ['js/utils.js', 'js/adb-core.js', 'js/security-auditor.js']);
+    return load(ctx, ['js/utils.js', 'js/adb-core.js', 'js/security-auditor.js', 'js/apk-analyzer.js']);
 }
 
 module.exports = { ROOT, createContext, load, loadLibs };
