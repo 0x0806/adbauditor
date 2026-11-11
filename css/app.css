@@ -633,7 +633,7 @@ select { color-scheme: dark; }
 .screenshot-placeholder svg { width: 40px; height: 40px; margin-bottom: 12px; opacity: 0.6; }
 .screenshot-preview { max-width: 100%; max-height: 70vh; border-radius: var(--r-md); border: 1px solid var(--line-2); box-shadow: var(--shadow-pop); }
 
-.tab-bar { display: flex; gap: 2px; margin: 0 0 20px; padding: 0; overflow-x: auto; border-bottom: 1px solid var(--line); background: none; border-radius: 0; border-left: 0; border-right: 0; border-top: 0; }
+.tab-bar { scrollbar-width: none; overflow-y: hidden; display: flex; gap: 2px; margin: 0 0 20px; padding: 0; overflow-x: auto; border-bottom: 1px solid var(--line); background: none; border-radius: 0; border-left: 0; border-right: 0; border-top: 0; }
 .tab-btn { position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px; margin-bottom: -1px; background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--lum-60); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: color 0.14s, border-color 0.14s, background-color 0.14s; }
 .tab-btn svg { width: 15px; height: 15px; }
 .tab-btn:hover { color: var(--lum-100); background: var(--fill-1); }
@@ -804,3 +804,4 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
     *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
     .hero-title .w { opacity: 1; filter: none; transform: none; }
 }
+.tab-bar::-webkit-scrollbar { display: none; }

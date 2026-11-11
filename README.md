@@ -1,286 +1,264 @@
-# ADB Auditor
+<h1 align="center">ADB Auditor</h1>
 
 <p align="center">
-  <img src="img/logo.svg" alt="ADB Auditor Logo" width="120">
+  <img src="img/logo.svg" alt="ADB Auditor logo" width="104">
 </p>
 
 <p align="center">
-  <strong>Android Security Auditing Platform</strong><br>
-  Created by <a href="https://github.com/thecybersandeep/adbauditor">Sandeep Wawdane</a> &middot; Enhanced &amp; maintained by <a href="https://github.com/0x0806/adbauditor">0x0806</a>
+  <strong>Browser-based Android security auditing over WebUSB.</strong><br>
+  No install, no server, no upload. Plug in a phone and audit it from a single tab.
 </p>
 
 <p align="center">
-  <a href="https://0x0806.github.io/adbauditor/">Live</a> •
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#documentation">Documentation</a>
+  Maintained and developed by <a href="https://github.com/0x0806"><strong>0x0806</strong></a><br>
+  <sub>Fork of the original ADB Auditor by <a href="https://github.com/thecybersandeep/adbauditor">Sandeep Wawdane</a>. Credit for the original idea and architecture is his; see <a href="#credits">Credits</a>.</sub>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Web-blue?style=flat-square" alt="Platform">
-  <img src="https://img.shields.io/badge/Protocol-WebUSB%20%2B%20ADB-green?style=flat-square" alt="Protocol">
-  <img src="https://img.shields.io/badge/Privacy-100%25%20Client--Side-purple?style=flat-square" alt="Privacy">
-  <img src="https://img.shields.io/badge/License-CC%20BY--NC--ND%204.0-lightgrey?style=flat-square" alt="License">
+  <a href="https://0x0806.github.io/adbauditor/"><strong>Open the live app</strong></a> &nbsp;·&nbsp;
+  <a href="#features">Features</a> &nbsp;·&nbsp;
+  <a href="#getting-started">Getting started</a> &nbsp;·&nbsp;
+  <a href="#interface">Interface</a> &nbsp;·&nbsp;
+  <a href="#architecture">Architecture</a> &nbsp;·&nbsp;
+  <a href="#development">Development</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/0x0806/adbauditor/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/0x0806/adbauditor/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status"></a>
+  <img src="https://img.shields.io/badge/version-2.2.0-2ee6a6?style=flat-square" alt="Version 2.2.0">
+  <img src="https://img.shields.io/badge/protocol-WebUSB%20%2B%20ADB-2ee6a6?style=flat-square" alt="Protocol: WebUSB + ADB">
+  <img src="https://img.shields.io/badge/data%20uploaded-none-2ee6a6?style=flat-square" alt="No data uploaded">
+  <img src="https://img.shields.io/badge/dependencies-zero%20runtime-2ee6a6?style=flat-square" alt="Zero runtime dependencies">
+  <img src="https://img.shields.io/badge/license-CC%20BY--NC--ND%204.0-lightgrey?style=flat-square" alt="License: CC BY-NC-ND 4.0">
+</p>
+
+<p align="center">
+  <img src="img/screenshots/landing.png" alt="ADB Auditor landing page" width="860">
 </p>
 
 ---
 
-## Overview
+## Why this exists
 
-ADB Auditor is a browser-based Android security auditing tool designed for penetration testers, security researchers, and cybersecurity professionals. It connects to Android devices via WebUSB and provides comprehensive security analysis capabilities without requiring any server-side processing.
-
-**🔒 100% Client-Side** - All data processing happens in your browser. No data is ever uploaded to any server.
-
-## Credits
-
-- **Original author: Sandeep Wawdane** ([@thecybersandeep](https://github.com/thecybersandeep)) - created ADB Auditor, its WebUSB/ADB architecture and UI. Original repository: https://github.com/thecybersandeep/adbauditor
-- **v2.0 enhancements: 0x0806** ([@0x0806](https://github.com/0x0806)) - hardened protocol core, rewritten auditor, new tools, tests, accessibility and docs. See [CHANGELOG.md](CHANGELOG.md) (135 itemised changes across 2.0 and 2.1) and [NOTICE.md](NOTICE.md).
-
-## What's new in 2.1
-
-An offline **APK static analyzer** (manifest, signing certificates, DEX indicators), a **SQLite viewer** with WAL support, a **Tools** section (intent launcher, deep-link tester, provider queries, permissions, settings, proxy, screen recording, evidence pack, baseline drift), device-exposure checks, folder ZIP / search / checksum / editor in the file browser, themes, and an activity log. Details in the [changelog](CHANGELOG.md).
-
-## What's new in 2.0
-
-Safer (injection/XSS fixes, CSP), more reliable (serialised USB transport, real timeouts, working key auth), more accurate (backup, debuggable, deep-link and network checks fixed), and more capable (command palette, app triage, device posture audit, streaming logcat, file operations, report export in JSON/Markdown/HTML/CSV, offline mode). Details in the [changelog](CHANGELOG.md).
+Mobile security reviews usually start with a pile of local tooling: platform-tools, a rooted test phone, scripts, a decompiler, a spreadsheet for notes. ADB Auditor puts the common first hour of that work into a browser tab. It speaks the ADB protocol directly over **WebUSB**, runs structured **OWASP MASTG-aligned** checks, and produces an exportable report, all on your machine. There is no backend to trust, no account, and no telemetry.
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| 📱 **App Analysis** | List installed applications, extract APK files, analyze permissions and signatures |
-| 📂 **File Browser** | Navigate device filesystem with root support, upload/download files |
-| 🗄️ **Storage Audit** | Analyze SharedPreferences, SQLite databases, identify sensitive data exposure |
-| 💻 **Shell Access** | Direct ADB shell with command history and autocomplete |
-| 📸 **Screenshot** | Capture device screen for documentation and evidence |
-| 🔐 **Security Scan** | Automated security checks for common vulnerabilities |
-| 📊 **Device Info** | Comprehensive device information and system properties |
-| 🧭 **App Triage** | Rank every installed app by risk (debuggable, backup, SDK levels, permissions) |
-| 🛡️ **Device Posture** | Patch age, bootloader, verified boot, SELinux, ADB-over-network, accessibility services |
-| 📝 **Reports** | Risk score, history/diff, export as JSON, Markdown, HTML or CSV |
-| 🔬 **APK Analyzer** | Offline manifest, signing and DEX analysis of any APK |
-| 🗃️ **SQLite Viewer** | Browse app databases (including WAL) in the browser |
-| 🧰 **Tools** | Intents, providers, permissions, settings, proxy, screen recording, evidence pack |
-| ⌨️ **Command Palette** | `Ctrl/Cmd+K` to jump anywhere; full keyboard navigation |
-| 📴 **Offline** | Installable PWA; works without a network after the first load |
+| Area | What you get |
+|---|---|
+| **Device overview** | Android and SDK level, patch level, storage, RAM, battery, uptime, bootloader and verified-boot state, full property list, JSON export |
+| **Applications** | List, search and pin apps; pull APKs (including split APKs); install single or split APKs by drag and drop; uninstall, clear data, force-stop |
+| **File browser** | Browse with optional root mode; upload, download, rename, delete, preview, checksum, in-browser editor, folder ZIP, recursive search, bookmarks, secret warning on previews |
+| **Screenshots** | Capture on demand or follow the screen live; copy to clipboard or save |
+| **Shell** | Real ADB shell with history, tab completion, streaming output (`Ctrl+C` to stop), root mode, transcript export |
+| **Security audit** | Full scan of one app: local storage (including world-readable files), backup, log secrets, exported components, deep links, intent filters, WebView, debuggable, SDK levels, signature scheme, install source, network security config, auth storage, permissions, root and emulator indicators |
+| **Device posture** | Patch age, bootloader, verified boot, SELinux, encryption, lock screen, developer options, ADB over network, Play Protect, device admins, user CAs |
+| **App triage** | Rank every installed app by risk (debuggable, backup, SDK levels, dangerous permissions) and filter by permission |
+| **Reports** | 0-100 risk score, per-check findings with fix advice, history and diff, export as JSON, Markdown, HTML or CSV |
+| **APK analyzer** | Offline manifest, signing certificates and DEX indicators for any APK, computed in the browser |
+| **SQLite viewer** | Read-only reader with WAL awareness; browse tables and export CSV |
+| **Toolkit** | Intent launcher, deep-link tester, content-provider queries, permission grants, system settings, proxy, screen recording, network info, evidence pack, package baseline drift |
+| **Productivity** | Command palette (`Ctrl/Cmd+K`), `Alt+1-7` navigation, activity log as an evidence trail, light and dark themes |
+| **Offline** | Installable PWA; the full app works without a network after the first load |
 
-## Screenshots
+Every device-facing action goes through validated command builders (`shQuote`, package-name and path validation), and every string that reaches the DOM is escaped. See [docs/SECURITY.md](docs/SECURITY.md).
 
-Captured from the hosted app at **https://0x0806.github.io/adbauditor/** using a built-in fake phone (demo data only - no real device or private data is shown). Regenerate them with `npm run screenshots`.
+## Getting started
 
-### 🔐 Landing page
-![ADB Auditor landing page](img/screenshots/landing.png)
+### Use it online
 
-### 📱 Device overview
-Hardware, build and security facts at a glance: Android version, patch level, storage, RAM, battery, bootloader and verified-boot state.
+Open **<https://0x0806.github.io/adbauditor/>** in Chrome, Edge or Opera (WebUSB is not available in Firefox or Safari).
 
-![Device overview](img/screenshots/overview.png)
+1. On the phone, open *Settings → About phone* and tap *Build number* seven times.
+2. Open *Settings → Developer options* and enable **USB debugging**.
+3. Connect a **data-capable** USB cable.
+4. In ADB Auditor, click **Connect** and choose the device in the browser prompt.
+5. Accept the *Allow USB debugging?* dialog on the phone.
 
-### 📁 File browser
-Browse, filter and sort the device filesystem with optional root mode; upload, download, rename, delete, preview, checksum, edit or zip a folder.
+> If `adb` is running on your computer it will hold the USB interface. Run `adb kill-server` first, or the browser will report that the device is in use.
 
-![File browser](img/screenshots/files.png)
+### Run it locally
 
-### 🛡️ Security scan with risk score
-One click runs the full audit and produces a 0-100 risk score, per-check results with fix advice, and JSON / Markdown / HTML / CSV export.
-
-![Security scan report](img/screenshots/security-scan.png)
-
-### 🔬 Offline APK analyzer
-Manifest findings, signing certificates, DEX indicators and exported components - computed entirely in your browser.
-
-![APK analyzer](img/screenshots/apk-analyzer.png)
-
-### 🗃️ SQLite viewer
-Open app databases pulled from the device (with WAL support) and export tables to CSV.
-
-![SQLite viewer](img/screenshots/sqlite-viewer.png)
-
-### ⌨️ Command palette
-`Ctrl/Cmd + K` jumps to any tool.
-
-![Command palette](img/screenshots/command-palette.png)
-
-
-## Requirements
-
-### Browser Support
-- Google Chrome 89+
-- Microsoft Edge 89+
-- Opera 75+
-
-> ⚠️ **Note:** Firefox and Safari do not support WebUSB API
-
-### Device Requirements
-- Android device with USB Debugging enabled
-- USB data cable (not charge-only)
-- For full analysis: Rooted device (optional but recommended)
-
-
-## Installation
-
-### Option 1: Use online
-Open **https://0x0806.github.io/adbauditor/** in Chrome, Edge or Opera. Everything runs in your browser; it also works offline after the first visit.
-
-### Option 2: Run Locally (No Hosting Required)
+The app is plain static files. There is no build step.
 
 ```bash
-# Clone the repository
 git clone https://github.com/0x0806/adbauditor.git
-
-# Navigate to directory
 cd adbauditor
-
-# Open directly in browser (recommended)
-google-chrome index.html
+npm run serve          # python3 -m http.server 8080, then open http://localhost:8080
 ```
 
-### Option 3: Self-Host
+WebUSB requires a secure context, which `localhost` and `https://` both satisfy.
 
-```
-# Clone the repository
-git clone https://github.com/0x0806/adbauditor.git
+### Docker
 
-# Navigate to directory
-cd adbauditor
-
-# Serve with any static server
-python -m http.server 8080
+```bash
+docker compose up -d                        # http://localhost:8080
 # or
-npx serve .
-# or
-php -S localhost:8080
+docker build -t adbauditor . && docker run -p 8080:80 adbauditor
 ```
 
-### Option 4: Docker
+The image is `nginx:alpine` serving the static files with the security headers in [nginx.conf](nginx.conf).
 
-```
-# Using Docker Compose
-docker-compose up -d
+### Requirements
 
-# Or using Docker directly
-docker build -t adbauditor .
-docker run -p 8080:80 adbauditor
-```
+| | |
+|---|---|
+| Browser | Chrome 89+, Edge 89+ or Opera 75+ (WebUSB) |
+| Device | Android with USB debugging enabled; root is optional and unlocks protected paths |
+| Cable | A data cable, not charge-only |
 
-Access at `http://localhost:8080`
+## Interface
 
-## Usage
+Version 2.2 is a ground-up redesign of the interface, built to feel like an operations console rather than a marketing page. No ADB, parser or audit logic was touched.
 
-### Quick Start
+<p align="center">
+  <img src="img/screenshots/overview.png" alt="Device overview" width="860">
+</p>
 
-1. **Enable USB Debugging** on your Android device:
-   - Go to `Settings` → `About Phone`
-   - Tap `Build Number` 7 times to enable Developer Options
-   - Go to `Settings` → `Developer Options`
-   - Enable `USB Debugging`
+**Design principles**
 
-2. **Connect your device** via USB cable
+- **One accent, real semantics.** A single signal-green accent marks actions and the current selection. Pass, review, fail and info states use their own success, warning, danger and info colours, so colour always carries meaning.
+- **A real shell.** Full-width top bar with connection state and device switcher; a labelled sidebar grouped into *Device* and *Analyze*, with shortcut hints, a command-palette button and a collapse toggle that is remembered. Tablets get an icon rail with tooltips; phones get a bottom tab bar.
+- **Dense where it helps.** Tables use sticky headers and tabular numerals, lists have 36-48 px rows, and long reports scan top to bottom with severity badges.
+- **Both themes are first-class.** Every hairline and fill derives from a theme-aware token, so light and dark share one component set. Dark, light and system modes are in *Settings*.
+- **Quiet motion.** State changes take 150-250 ms. The only choreography is one entrance on the landing page. Everything respects `prefers-reduced-motion`.
+- **Accessible by default.** Skip link, visible focus ring, labelled controls, `aria-live` toasts, `aria-current` navigation and keyboard-reachable dialogs.
 
-3. **Open ADB Auditor** in Chrome/Edge
+<table>
+  <tr>
+    <td width="50%"><img src="img/screenshots/security-scan.png" alt="Security scan report with risk score"></td>
+    <td width="50%"><img src="img/screenshots/apps.png" alt="Applications list"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Full scan with risk score and findings</sub></td>
+    <td align="center"><sub>Applications with split-APK install</sub></td>
+  </tr>
+  <tr>
+    <td><img src="img/screenshots/files.png" alt="File browser"></td>
+    <td><img src="img/screenshots/apk-analyzer.png" alt="Offline APK analyzer"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>File browser</sub></td>
+    <td align="center"><sub>Offline APK analyzer</sub></td>
+  </tr>
+  <tr>
+    <td><img src="img/screenshots/sqlite-viewer.png" alt="SQLite viewer"></td>
+    <td><img src="img/screenshots/command-palette.png" alt="Command palette"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>SQLite viewer</sub></td>
+    <td align="center"><sub>Command palette</sub></td>
+  </tr>
+</table>
 
-4. **Click "Connect"** and select your device from the browser popup
+<sub>Screenshots are captured from the hosted app against a built-in fake phone, so only demo data is shown. Regenerate them with <code>npm run screenshots</code>.</sub>
 
-5. **Accept the USB debugging prompt** on your device
+### Keyboard
 
+| Shortcut | Action |
+|---|---|
+| `Ctrl/Cmd + K` | Command palette |
+| `Alt + 1` … `Alt + 7` | Overview, Applications, Files, Screenshot, Shell, Security, Tools |
+| `Alt + R` | Refresh the current view |
+| `Alt + D` | Disconnect the device |
+| `?` | Shortcut help |
+| `Tab` / `↑` `↓` | Shell: complete / history |
+| `Ctrl + C` / `Ctrl + L` | Shell: stop a streaming command / clear |
 
-## Documentation
+## Architecture
 
-### File Structure
+There is no framework, bundler or runtime dependency: ES2020 in the browser, loaded as classic scripts under a strict Content-Security-Policy (`script-src 'self'`, no `eval`, no inline script elements).
 
 ```
 adbauditor/
+├── index.html               App shell: top bar, sidebar, content mount, dialogs
+├── css/
+│   └── app.css              Design tokens, shell, landing, components, responsive rules
 ├── js/
-│   ├── utils.js            # Shared pure helpers (quoting, parsing, ZIP, reports)
-│   ├── adb-core.js         # ADB protocol implementation
-│   ├── security-auditor.js # Security scanning module
-│   ├── apk-analyzer.js     # Offline APK static analysis
-│   ├── sqlite-reader.js    # Read-only SQLite reader
-│   ├── toolkit.js          # Validated device-control commands
-│   ├── tools-ui.js         # Tools section UI, settings, theme
-│   ├── app.js              # Main application logic
-│   └── register-sw.js      # Service worker registration
-├── tests/                  # node:test unit tests, mock ADB device, Chromium e2e
-├── docs/                   # API.md, SECURITY.md
-├── img/logo.svg
-├── index.html, 404.html, sw.js, manifest.webmanifest
-├── CHANGELOG.md, NOTICE.md
-└── Dockerfile, nginx.conf, docker-compose.yml, .github/workflows/ci.yml
+│   ├── utils.js             Pure helpers: quoting, path and package validation, ls parsing,
+│   │                        ZIP and CRC32, risk score, report export (JSON/MD/HTML/CSV)
+│   ├── adb-core.js          ADB protocol over WebUSB: framing, RSA auth, serialised transport,
+│   │                        shell and streaming shell, sync (push/pull), device manager
+│   ├── security-auditor.js  MASTG-aligned checks, device posture, triage, secret scanning
+│   ├── apk-analyzer.js      Offline ZIP, binary AndroidManifest, signing block and DEX parsing
+│   ├── sqlite-reader.js     Read-only SQLite reader (b-tree, overflow, WAL, 64-bit rowids)
+│   ├── toolkit.js           Validated device-control commands (intents, radios, settings, ...)
+│   ├── app.js               Sections, templates, state, shortcuts, command palette
+│   ├── tools-ui.js          Tools section, settings, theme, activity log
+│   ├── ui.js                Interface-only behaviour: sidebar, spotlight, count-up
+│   └── register-sw.js       Service worker registration
+├── sw.js                    Network-first service worker with an offline precache
+├── manifest.webmanifest     PWA manifest
+├── 404.html                 Custom not-found page
+├── img/                     Logo and README screenshots
+├── tests/                   node:test suites, scriptable mock ADB device, Chromium e2e
+├── scripts/                 check-syntax.js, site-check.js (deployed-site checks and screenshots)
+├── docs/                    API.md, SECURITY.md
+└── Dockerfile, docker-compose.yml, nginx.conf, .github/workflows/ci.yml
 ```
 
-### Keyboard Shortcuts
+**How a request flows.** `app.js` renders a section template, a handler calls `SecurityAuditor` or `DeviceToolkit`, which builds a validated shell command and sends it through `ADBConnection` (a serialised USB transport with real timeouts). Output is parsed by pure functions in `utils.js` and rendered with escaped HTML. Nothing leaves the page.
 
-| Shortcut | Action |
-|----------|--------|
-| `Alt + 1-7` | Switch section |
-| `Alt + R` | Refresh current view |
-| `Alt + D` | Disconnect device |
-| `Ctrl/Cmd + K` | Command palette |
-| `?` | Shortcut help |
-| `Tab` / `↑` `↓` | Shell: autocomplete / history |
-| `Ctrl + C` / `Ctrl + L` | Shell: stop streaming command / clear |
+**Design system.** `css/app.css` is organised as tokens → base → shell → buttons → landing → app surfaces → responsive → reduced motion. Hairlines and fills are mixed from one `--ink` token, so the light theme is a token swap, not a second stylesheet. Legacy token names (`--pulse`, `--lum-*`, `--depth-*`) are kept because the JS templates reference them.
 
-### Development & Testing
+Full API reference: [docs/API.md](docs/API.md).
+
+## Development
+
+Requires Node 18+ (22 in CI) and, for the browser suites, Chromium or Chrome.
 
 ```bash
-npm run lint       # syntax check
-npm test           # 131 unit tests (mock ADB device, auditor, APK analyzer, SQLite, toolkit)
-npm run test:e2e   # headless Chromium with a fake WebUSB device
-npm run test:site  # checks the deployed site (assets, CSP, offline, 404, connected session)
+npm ci
+npm run lint        # syntax check of every file + ESLint (errors fail CI)
+npm test            # 133 unit tests: protocol, auditor, APK, SQLite, toolkit, fuzzing, device manager
+npm run test:e2e    # headless Chromium against a fake WebUSB device, end to end
+npm run test:site   # checks a deployed copy (assets, CSP, offline, 404, connected session)
+node scripts/site-check.js --serve        # same, against the working tree
+npm run screenshots                        # regenerate img/screenshots from the live site
 ```
 
-Protocol and device-control code is tested against a scriptable mock device, not physical hardware. Set `ADBAUD_APK_DIR` to a folder of your own APKs to smoke-test the analyzer on real files.
+The protocol and device-control code is tested against a scriptable mock device, not physical hardware. The parsers are mutation-fuzzed with corrupted APK, DEX, binary XML and SQLite input. Set `ADBAUD_APK_DIR` to a folder of your own APKs to smoke-test the analyzer on real files.
 
-## Privacy & Security
+CI runs lint, unit tests, the end-to-end run and a local site check on every push and pull request.
 
-- **Zero Data Upload**: All processing is done locally in your browser
-- **No Tracking**: No analytics, telemetry, or tracking of any kind
-- **No Account Required**: Use immediately without registration
-- **Open Source**: Full source code available for audit
+## Privacy and security
+
+- **Nothing is uploaded.** All processing happens in your browser. There is no backend.
+- **No tracking.** No analytics, telemetry or third-party scripts. The only external request is the font stylesheet.
+- **Hardened by default.** Strict CSP, escaped output, shell-quoted arguments, validated package names and paths, private `no-referrer` policy.
+- **Local evidence trail.** The activity log lives in your browser's storage and can be exported or cleared. *Settings → Privacy* can also forget the ADB authorization key.
+
+Details, threat notes and the 2.0 hardening list are in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Troubleshooting
 
-### Device Not Detected
+| Symptom | Try |
+|---|---|
+| Device not listed | Use a data cable and another port; run `adb kill-server` on your computer; revoke USB debugging authorizations on the phone and reconnect |
+| "Device in use" | Another program (usually a running `adb` server) holds the interface |
+| Connection drops | Keep the screen on during long transfers; check the cable; reconnect |
+| Permission denied | Enable the **Root** toggle in Files or Shell (the device must be rooted) |
+| Connect button does nothing | WebUSB needs Chrome, Edge or Opera and a secure context (`https://` or `localhost`) |
 
-1. Try a different USB cable (ensure it's a data cable)
-2. Try a different USB port
-3. Revoke USB debugging authorizations and re-authorize
-4. Restart ADB on device: `adb kill-server && adb start-server`
+## Credits
 
-### Connection Lost
+**ADB Auditor was created by [Sandeep Wawdane](https://github.com/thecybersandeep)** ([@thecybersandeep](https://github.com/thecybersandeep)). The original idea, the browser-based WebUSB/ADB architecture and the first implementation are his work: <https://github.com/thecybersandeep/adbauditor>. Thank you, Sandeep.
 
-1. Check USB cable connection
-2. Disable battery optimization for USB debugging
-3. Keep device screen on during transfer
+**This fork is developed and maintained by [0x0806](https://github.com/0x0806).** Version 2.0 and 2.1 brought the hardened protocol core, a rewritten auditor, the APK analyzer, SQLite viewer, Tools section, test suite, offline mode and documentation. Version 2.2 is the interface redesign. Every change is itemised in [CHANGELOG.md](CHANGELOG.md) and attributed in [NOTICE.md](NOTICE.md).
 
-### Permission Denied
-
-1. Enable Root toggle for protected directories
-2. Grant root access on device when prompted
-3. Some system files may still be inaccessible
-
-
+The landing-page spotlight and count-up effects are small vanilla re-implementations of ideas from [React Bits](https://reactbits.dev); this project ships no React code.
 
 ## License
 
-This project is licensed under CC BY-NC-ND 4.0, Copyright (c) 2026 Sandeep (original author). See the original [LICENSE](https://github.com/thecybersandeep/adbauditor/blob/main/LICENSE) and [NOTICE.md](NOTICE.md). Note that the NoDerivatives term means modified versions should be distributed only with the original author's permission.
-
-
+Licensed under **CC BY-NC-ND 4.0**, Copyright (c) 2026 Sandeep Wawdane (original author). See the original [LICENSE](https://github.com/thecybersandeep/adbauditor/blob/main/LICENSE) and [NOTICE.md](NOTICE.md). Note that the NoDerivatives term means modified versions should be distributed only with the original author's permission.
 
 ## Disclaimer
 
-This tool is intended for authorized security testing and educational purposes only. Users are responsible for ensuring they have proper authorization before testing any device. The authors are not responsible for any misuse of this tool.
-
-
+This tool is intended for authorized security testing and education. Make sure you have permission before testing any device. The authors are not responsible for misuse.
 
 ---
 
 <p align="center">
-  Made with ❤️ for the Security Community<br>
-  Created by Sandeep Wawdane · Enhanced by 0x0806
-</p>
-
-<p align="center">
-  <a href="https://github.com/0x0806/adbauditor/stargazers">⭐ Star this repo</a> if you find it useful!
+  Built and maintained by <a href="https://github.com/0x0806">0x0806</a> &nbsp;·&nbsp; Original creator <a href="https://github.com/thecybersandeep/adbauditor">Sandeep Wawdane</a><br>
+  <a href="https://github.com/0x0806/adbauditor/stargazers">Star the repo</a> if it saves you time.
 </p>
