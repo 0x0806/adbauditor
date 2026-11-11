@@ -141,223 +141,130 @@
     const templates = {
         welcome: `
             <div class="landing-page">
-                <section class="hero-section">
-                    <div class="hero-canvas">
-                        <div class="hero-glow glow-primary active"></div>
-                        <div class="hero-glow glow-secondary active"></div>
-                        <div class="hero-glow glow-tertiary active"></div>
-                        <div class="hero-grid"></div>
-                        <div class="hero-particles">
-                            <div class="particle"></div>
-                            <div class="particle"></div>
-                            <div class="particle"></div>
-                            <div class="particle"></div>
-                            <div class="particle"></div>
-                            <div class="particle"></div>
-                            <div class="particle"></div>
-                            <div class="particle"></div>
+                <section class="hero" aria-labelledby="heroTitle">
+                    <div class="hero-bg" aria-hidden="true"></div>
+                    <div class="l-wrap hero-grid">
+                        <div class="hero-copy">
+                            <h1 class="hero-title" id="heroTitle" aria-label="Android security audits, in your browser."><span class="w" style="--i:0">Android</span> <span class="w" style="--i:1">security</span> <span class="w" style="--i:2">audits,</span> <span class="hl"><span class="w" style="--i:3"><em>in</em></span> <span class="w" style="--i:4"><em>your</em></span> <span class="w" style="--i:5"><em>browser.</em></span></span></h1>
+                            <p class="hero-tagline">ADB Auditor talks to your device over WebUSB, then analyzes apps, files and configuration with OWASP MASTG-aligned checks. <strong>Every byte stays on your machine.</strong></p>
+                            <div class="hero-cta">
+                                <button class="btn btn-primary btn-lg" onclick="document.getElementById('connectBtn').click()">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                    Connect device
+                                </button>
+                                <a href="https://github.com/0x0806/adbauditor" target="_blank" rel="noopener" class="btn btn-ghost btn-lg">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                                    View source
+                                </a>
+                            </div>
+                            <dl class="hero-facts">
+                                <div class="hero-fact"><dt>Processing</dt><dd>100% client-side</dd></div>
+                                <div class="hero-fact"><dt>Data uploaded</dt><dd>None</dd></div>
+                                <div class="hero-fact"><dt>Protocol</dt><dd>WebUSB + ADB</dd></div>
+                            </dl>
+                            <p class="hero-note">Needs Chrome or Edge, a USB cable and USB debugging enabled.</p>
                         </div>
-                    </div>
-                    <div class="hero-content">
-                        <h1 class="hero-title">
-                            <span class="title-line title-gradient">Android Security</span>
-                            <span class="title-line title-accent">Reimagined</span>
-                        </h1>
-                        <p class="hero-tagline">
-                            The most advanced <strong>client-side</strong> Android auditing platform. 
-                            Analyze apps, extract data, and perform deep security assessments, 
-                            all without your data ever leaving your device.
-                        </p>
-                        <div class="hero-trust">
-                            <div class="trust-item">
-                                <div class="trust-icon">
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
-                                </div>
-                                <div class="trust-text">
-                                    <span class="trust-label">Privacy</span>
-                                    <span class="trust-value">100% Client-Side</span>
+                        <div class="report-demo" role="img" aria-label="Example scan report: risk 23 out of 100, 12 passed, 1 failed, 5 to review">
+                            <div class="rd-bar"><strong>com.example.app</strong><span class="rd-tag">Example output</span></div>
+                            <div class="rd-summary">
+                                <div class="rd-score"><b data-count="23">23</b><span>/100 risk</span></div>
+                                <div class="rd-bars">
+                                    <div class="rd-bar-row"><span>Pass</span><i style="--w:67%;--c:var(--success)"></i><b>12</b></div>
+                                    <div class="rd-bar-row"><span>Review</span><i style="--w:28%;--c:var(--warning)"></i><b>5</b></div>
+                                    <div class="rd-bar-row"><span>Fail</span><i style="--w:6%;--c:var(--danger)"></i><b>1</b></div>
                                 </div>
                             </div>
-                            <div class="trust-item">
-                                <div class="trust-icon">
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
-                                </div>
-                                <div class="trust-text">
-                                    <span class="trust-label">Data Storage</span>
-                                    <span class="trust-value">Zero Upload</span>
-                                </div>
-                            </div>
-                            <div class="trust-item">
-                                <div class="trust-icon">
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                                </div>
-                                <div class="trust-text">
-                                    <span class="trust-label">Protocol</span>
-                                    <span class="trust-value">WebUSB + ADB</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="hero-cta">
-                            <button class="btn-hero btn-hero-primary" onclick="document.getElementById('connectBtn').click()">
-                                <span>
-                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                                    Connect Device
-                                </span>
-                            </button>
-                            <a href="https://github.com/0x0806/adbauditor" target="_blank" rel="noopener" class="btn-hero btn-hero-secondary">
-                                <span>
-                                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-                                    View Source
-                                </span>
-                            </a>
-                        </div>
-                    </div>
-                    <div class="hero-scroll" onclick="document.querySelector('.features-section').scrollIntoView({behavior:'smooth'})">
-                        <div class="scroll-indicator">
-                            <div class="scroll-dot"></div>
-                        </div>
-                        <span>Explore</span>
-                    </div>
-                </section>
-
-                <div class="section-divider"></div>
-
-                <section class="features-section">
-                    <div class="features-header">
-                        <span class="section-label">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
-                            Capabilities
-                        </span>
-                        <h2 class="section-title">Powerful Security Tools</h2>
-                        <p class="section-desc">Everything you need for comprehensive Android security assessments, built right into your browser.</p>
-                    </div>
-                    <div class="features-grid">
-                        <div class="feature-card">
-                            <div class="feature-glow"></div>
-                            <div class="feature-icon">
-                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
-                            </div>
-                            <h3>App Analysis</h3>
-                            <p>Deep dive into installed applications. Extract APKs, analyze permissions, signatures, and package metadata.</p>
-                        </div>
-                        <div class="feature-card">
-                            <div class="feature-glow"></div>
-                            <div class="feature-icon">
-                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                            </div>
-                            <h3>File System</h3>
-                            <p>Full filesystem access with root support. Navigate, upload, download, and manage device files securely.</p>
-                        </div>
-                        <div class="feature-card">
-                            <div class="feature-glow"></div>
-                            <div class="feature-icon">
-                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-                            </div>
-                            <h3>Security Audit</h3>
-                            <p>OWASP MASTG aligned tests. Analyze storage, backup configs, exported components, and permissions.</p>
-                        </div>
-                        <div class="feature-card">
-                            <div class="feature-glow"></div>
-                            <div class="feature-icon">
-                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            </div>
-                            <h3>Shell Access</h3>
-                            <p>Direct ADB shell with command history. Execute commands, scripts, and interact with the device in real-time.</p>
-                        </div>
-                        <div class="feature-card">
-                            <div class="feature-glow"></div>
-                            <div class="feature-icon">
-                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                            </div>
-                            <h3>Screenshot</h3>
-                            <p>Instant screen capture for documentation. Perfect for evidence collection and audit reporting.</p>
-                        </div>
-                        <div class="feature-card">
-                            <div class="feature-glow"></div>
-                            <div class="feature-icon">
-                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>
-                            </div>
-                            <h3>Multi-Device</h3>
-                            <p>Connect and manage multiple devices simultaneously. Switch between targets seamlessly during assessments.</p>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="setup-section">
-                    <div class="setup-header">
-                        <span class="section-label">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                            Quick Start
-                        </span>
-                        <h2 class="section-title">Ready in Seconds</h2>
-                        <p class="section-desc">No installation required. Connect your device and start auditing immediately.</p>
-                    </div>
-                    <div class="setup-steps">
-                        <div class="setup-step">
-                            <div class="step-number">1</div>
-                            <div class="step-content">
-                                <h4>Enable USB Debugging</h4>
-                                <p>Settings → Developer Options → USB Debugging</p>
-                            </div>
-                        </div>
-                        <div class="setup-step">
-                            <div class="step-number">2</div>
-                            <div class="step-content">
-                                <h4>Connect Device</h4>
-                                <p>Use a data-capable USB cable to connect</p>
-                            </div>
-                        </div>
-                        <div class="setup-step">
-                            <div class="step-number">3</div>
-                            <div class="step-content">
-                                <h4>Authorize Access</h4>
-                                <p>Accept the USB debugging prompt on device</p>
-                            </div>
-                        </div>
-                        <div class="setup-step">
-                            <div class="step-number">4</div>
-                            <div class="step-content">
-                                <h4>Start Auditing</h4>
-                                <p>Click Connect and select your device</p>
+                            <div class="rd-list">
+                                <div class="rd-row"><span class="badge pass">PASS</span><span>Local storage for sensitive data</span><small>MASVS-STORAGE</small></div>
+                                <div class="rd-row"><span class="badge fail">FAIL</span><span>Backup configuration allows extraction</span><small>MASVS-STORAGE</small></div>
+                                <div class="rd-row"><span class="badge warning">REVIEW</span><span>Exported components need permission checks</span><small>MASVS-PLATFORM</small></div>
+                                <div class="rd-row"><span class="badge pass">PASS</span><span>Sensitive data in logs</span><small>MASVS-STORAGE</small></div>
                             </div>
                         </div>
                     </div>
                 </section>
 
-                <section class="tech-section">
-                    <div class="tech-header">
-                        <span class="section-label">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
-                            Technology
-                        </span>
-                        <h2 class="section-title">Built Different</h2>
+                <section class="l-section features-section" id="capabilities">
+                    <div class="l-wrap">
+                        <div class="l-head">
+                            <h2 class="l-title">Everything an Android audit needs, in one tab</h2>
+                            <p class="l-lede">Inspect apps, files and configuration, run structured security checks, and keep the evidence, with no install and no server.</p>
+                        </div>
+                        <div class="cap-list">
+                            <article class="cap">
+                                <h3><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>App analysis</h3>
+                                <p>Inspect every installed package: permissions, signing, components and metadata. Pull APKs for offline review or install new ones, including split APKs.</p>
+                                <div class="cap-tags"><code>pm list</code><code>dumpsys package</code><code>APK pull</code></div>
+                            </article>
+                            <article class="cap">
+                                <h3><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>File system</h3>
+                                <p>Browse, upload, download, rename and delete across the device, with an optional root mode for protected paths.</p>
+                                <div class="cap-tags"><code>ls -la</code><code>push / pull</code><code>root mode</code></div>
+                            </article>
+                            <article class="cap">
+                                <h3><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>Security audit</h3>
+                                <p>OWASP MASTG-aligned checks for storage, backup, exported components, debuggable builds and permissions, rolled into a single risk score you can export.</p>
+                                <div class="cap-tags"><code>MASVS</code><code>JSON</code><code>Markdown</code><code>HTML</code><code>CSV</code></div>
+                            </article>
+                            <article class="cap">
+                                <h3><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>Shell</h3>
+                                <p>A real ADB shell with history, tab completion and streaming output. Save the transcript as part of your evidence trail.</p>
+                                <div class="cap-tags"><code>history</code><code>tab complete</code><code>streaming</code></div>
+                            </article>
+                            <article class="cap">
+                                <h3><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>Screenshots</h3>
+                                <p>Capture the screen on demand or follow it live, then copy or save the image straight into a report.</p>
+                                <div class="cap-tags"><code>screencap</code><code>live view</code></div>
+                            </article>
+                            <article class="cap">
+                                <h3><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>Toolkit</h3>
+                                <p>Intents and deep links, package baselines, network and system info, an APK static analyzer and an SQLite viewer.</p>
+                                <div class="cap-tags"><code>APK analyzer</code><code>SQLite</code><code>intents</code></div>
+                            </article>
+                            <article class="cap">
+                                <h3><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>Multi-device</h3>
+                                <p>Connect several devices and switch between targets mid-assessment without losing context.</p>
+                                <div class="cap-tags"><code>WebUSB</code><code>switcher</code></div>
+                            </article>
+                        </div>
                     </div>
-                    <div class="tech-grid">
-                        <div class="tech-item">
-                            <span class="tech-label">Protocol</span>
-                            <span class="tech-value">WebUSB + ADB</span>
+                </section>
+
+                <section class="l-section" id="start">
+                    <div class="l-wrap">
+                        <div class="l-head">
+                            <h2 class="l-title">Connected in four steps</h2>
+                            <p class="l-lede">No installation. Plug in a device and start auditing.</p>
                         </div>
-                        <div class="tech-item">
-                            <span class="tech-label">Processing</span>
-                            <span class="tech-value">100% Browser</span>
+                        <ol class="steps">
+                            <li class="step"><span class="step-n">01</span><h3>Enable USB debugging</h3><p>Settings → Developer options → USB debugging.</p></li>
+                            <li class="step"><span class="step-n">02</span><h3>Connect the device</h3><p>Use a data-capable USB cable.</p></li>
+                            <li class="step"><span class="step-n">03</span><h3>Authorize access</h3><p>Accept the debugging prompt on the phone.</p></li>
+                            <li class="step"><span class="step-n">04</span><h3>Start auditing</h3><p>Click Connect and choose your device.</p></li>
+                        </ol>
+                    </div>
+                </section>
+
+                <section class="l-section" id="privacy">
+                    <div class="l-wrap spec">
+                        <div>
+                            <h2 class="l-title">Your device data never leaves your machine</h2>
+                            <p class="l-lede">The ADB protocol runs entirely in your browser. There is no backend to trust, no account, and no telemetry. The source is open for you to read.</p>
                         </div>
-                        <div class="tech-item">
-                            <span class="tech-label">Data Upload</span>
-                            <span class="tech-value">None</span>
-                        </div>
-                        <div class="tech-item">
-                            <span class="tech-label">Requirements</span>
-                            <span class="tech-value">Chrome / Edge</span>
-                        </div>
+                        <dl class="spec-list">
+                            <div class="spec-row"><dt>Protocol</dt><dd>WebUSB + ADB</dd></div>
+                            <div class="spec-row"><dt>Processing</dt><dd>100% in the browser</dd></div>
+                            <div class="spec-row"><dt>Data upload</dt><dd>None</dd></div>
+                            <div class="spec-row"><dt>Requirements</dt><dd>Chrome or Edge</dd></div>
+                        </dl>
                     </div>
                 </section>
 
                 <footer class="landing-footer">
                     <a href="https://github.com/0x0806/adbauditor" target="_blank" rel="noopener noreferrer" class="github-link">
-                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                         <span>Star on GitHub</span>
                     </a>
-                    <span class="footer-divider"></span>
                     <span>Created by</span>
                     <a href="https://github.com/thecybersandeep/adbauditor" target="_blank" rel="noopener noreferrer">Sandeep Wawdane</a>
                     <span class="footer-divider"></span>

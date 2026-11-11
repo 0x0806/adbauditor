@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.2.0 - interface redesign by 0x0806
+
+A ground-up redesign of the interface. No device, ADB, parser or audit logic changed: the 132 unit tests, lint and the end-to-end run pass unmodified.
+
+### Changed
+- **New design system.** Graphite surfaces with a single signal-green accent, semantic success / warning / danger / info colours, Geist and Geist Mono type, and a documented token set (`css/app.css`). The violet gradients, glowing orbs, noise overlay and gradient text are gone.
+- **Real enterprise shell.** A full-width top bar replaces the floating pill. The icon-only dock became a labelled sidebar with *Device* and *Analyze* groups, `Alt+1-7` shortcut hints, a command-palette button and a collapse toggle that is remembered per browser.
+- **Rebuilt landing page.** Plain headline with a staggered blur-in entrance, a live HTML sample report with count-up score, a capability index with a pointer spotlight, a four-step setup sequence and a privacy section. Credits to both authors are kept in the footer.
+- **Restyled components:** buttons (one primary, ghost and danger vocabulary), inputs and selects, underline tabs, tables with sticky headers and tabular numerals, scan-report badges, drop zones, file and app lists, terminal, dialogs, toasts, loading overlay and command palette.
+- Light theme is now first-class: every hairline and fill is derived from a theme-aware token instead of hard-coded white.
+- Stylesheet moved out of `index.html` into `css/app.css` (cacheable, precached by the service worker). New `js/ui.js` holds interface-only behaviour (sidebar, spotlight, count-up).
+
+### Fixed (UI / UX)
+- **No navigation on phones:** the dock was hidden below 768 px with nothing in its place. It is now a bottom tab bar.
+- The floating header overlapped page controls and report content while scrolling.
+- Tablet widths now collapse the sidebar to icons with tooltips instead of squeezing content.
+- Duplicate `@keyframes` (`pulse`, `spin`) and duplicate modal rules removed.
+- Borders and fills disappeared in the light theme because they were hard-coded `rgba(255,255,255,...)`.
+- Hover-only controls (row actions) stay visible on touch devices.
+- Focus rings, text selection, caret and scrollbars now follow the theme; `prefers-reduced-motion` disables all entrance motion.
+
 ## 2.1.1 - bug-fix release by 0x0806
 
 Found with mutation fuzzing of every parser, a concurrency stress test, adversarial end-to-end scenarios and an independent code review. Each fix has a regression test.

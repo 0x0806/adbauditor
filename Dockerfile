@@ -4,7 +4,7 @@ LABEL maintainer="Sandeep Wawdane <contact@thecybersandeep.com>"
 LABEL org.opencontainers.image.authors="Sandeep Wawdane (original creator); 0x0806 (enhancements)"
 LABEL org.opencontainers.image.source="https://github.com/0x0806/adbauditor"
 LABEL description="ADB Auditor - Professional Android Security Auditing Platform"
-LABEL version="2.1.1"
+LABEL version="2.2.0"
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY . /usr/share/nginx/html/
